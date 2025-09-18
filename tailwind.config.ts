@@ -57,6 +57,27 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        // Resume editor colors
+        chat: {
+          background: "hsl(var(--chat-background))",
+          border: "hsl(var(--chat-border))",
+        },
+        workspace: {
+          background: "hsl(var(--workspace-background))",
+        },
+        addition: {
+          DEFAULT: "hsl(var(--addition))",
+          bg: "hsl(var(--addition-bg))",
+          hover: "hsl(var(--addition-hover))",
+        },
+        removal: {
+          DEFAULT: "hsl(var(--removal))",
+          bg: "hsl(var(--removal-bg))",
+          hover: "hsl(var(--removal-hover))",
+        },
+        success: "hsl(var(--success))",
+        warning: "hsl(var(--warning))",
+        compiling: "hsl(var(--compiling))",
       },
       borderRadius: {
         lg: "var(--radius)",
