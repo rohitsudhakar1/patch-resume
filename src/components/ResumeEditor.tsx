@@ -146,24 +146,26 @@ export const ResumeEditor = () => {
         (c.startLine || c.start_line) === lineNumber
       );
       
-      const isSmartReplacement = (change.type === 'removal' && 
-        otherChangesOnSameLine.some(c => c.type === 'addition')) ||
-        (change.type === 'addition' && 
-        otherChangesOnSameLine.some(c => c.type === 'removal'));
+      const isSmartReplacement = change.type === 'removal' && 
+        otherChangesOnSameLine.some(c => c.type === 'addition');
+      
+      console.log(`🔍 DEBUG: ResumeEditor - Change ${changeId}:`);
+      console.log(`  Type: ${change.type}`);
+      console.log(`  Line: ${lineNumber}`);
+      console.log(`  Other changes on same line: ${otherChangesOnSameLine.length}`);
+      console.log(`  Is smart replacement: ${isSmartReplacement}`);
       
       if (isSmartReplacement && accepted) {
-        // Remove both changes for smart replacement
-        const removalChange = otherChangesOnSameLine.find(c => c.type === 'removal');
-        const additionChange = otherChangesOnSameLine.find(c => c.type === 'addition');
-        
-        if (removalChange && additionChange) {
-          setChanges(prev => prev.filter(c => c.id !== removalChange.id && c.id !== additionChange.id));
-          console.log('🔄 DEBUG: Smart replacement - removed both changes');
-        } else {
-          setChanges(prev => prev.filter(c => c.id !== changeId));
-        }
+        // Remove all changes on the same line for smart replacement
+        const allChangesOnSameLine = changes.filter(c => 
+          (c.startLine || c.start_line) === lineNumber
+        );
+        console.log(`🔄 DEBUG: Smart replacement - removing ${allChangesOnSameLine.length} changes on line ${lineNumber}`);
+        setChanges(prev => prev.filter(c => (c.startLine || c.start_line) !== lineNumber));
+        console.log('🔄 DEBUG: Smart replacement - removed all changes on line');
       } else {
         // Remove only this change
+        console.log(`🔄 DEBUG: Individual change - removing ${changeId}`);
         setChanges(prev => prev.filter(c => c.id !== changeId));
       }
     }

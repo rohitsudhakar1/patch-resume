@@ -63,25 +63,49 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
     }
   }, [changes?.map(c => c.id).join(',')]);
 
+  const cleanDuplicateContent = (content: string) => {
+    const lines = content.split('\n');
+    const cleanedLines: string[] = [];
+    const seenLines = new Set<string>();
+    
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      // Skip duplicate university entries
+      if (trimmedLine.includes('\\textbf{') && trimmedLine.includes('Expected May 2026')) {
+        if (!seenLines.has(trimmedLine)) {
+          seenLines.add(trimmedLine);
+          cleanedLines.push(line);
+        }
+      } else {
+        cleanedLines.push(line);
+      }
+    }
+    
+    return cleanedLines.join('\n');
+  };
+
   const handleContentChange = async (newContent: string) => {
     console.log('📝 DEBUG: Content changed');
-    setContent(newContent);
-
+    
+    // Clean up duplicate content
+    const cleanedContent = cleanDuplicateContent(newContent);
+    setContent(cleanedContent);
+    
     // Update sessionStorage
     const projectData = sessionStorage.getItem('currentProject');
     if (projectData) {
       try {
         const project = JSON.parse(projectData);
-        project.resume_tex = newContent;
+        project.resume_tex = cleanedContent;
         sessionStorage.setItem('currentProject', JSON.stringify(project));
-
+        
         // Create project in backend
         const response = await fetch('http://localhost:8000/project/recreate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(project),
         });
-
+        
         if (response.ok) {
           console.log('✅ DEBUG: Project updated in backend');
         }
@@ -90,7 +114,7 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
       }
     }
     
-    onContentChange?.(newContent);
+    onContentChange?.(cleanedContent);
   };
 
   const handleApplyChange = (changeId: string, accepted: boolean) => {
@@ -101,42 +125,66 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
       console.log(`❌ DEBUG: Change ${changeId} not found`);
       return;
     }
-
+    
+    console.log(`🔍 DEBUG: Found change:`, {
+      id: change.id,
+      type: change.type,
+      startLine: change.startLine || change.start_line,
+      content: change.content
+    });
+        
     const lineNumber = change.startLine || change.start_line || 1;
     const otherChangesOnSameLine = changes?.filter(c => 
       c.id !== changeId && 
       (c.startLine || c.start_line) === lineNumber &&
       !processedChanges.has(c.id)
     ) || [];
-
+    
+    console.log(`🔍 DEBUG: Line ${lineNumber} analysis:`);
+    console.log(`  Other changes on same line: ${otherChangesOnSameLine.length}`);
+    otherChangesOnSameLine.forEach(c => {
+      console.log(`    - ${c.id}: ${c.type} - "${c.content}"`);
+    });
+        
     // Check if this is part of a smart replacement (removal + addition on same line)
-    const isSmartReplacement = (change.type === 'removal' && 
-      otherChangesOnSameLine.some(c => c.type === 'addition')) ||
-      (change.type === 'addition' && 
-      otherChangesOnSameLine.some(c => c.type === 'removal'));
-
+    const isSmartReplacement = change.type === 'removal' && 
+      otherChangesOnSameLine.some(c => c.type === 'addition');
+    
+    console.log(`🔍 DEBUG: Is smart replacement: ${isSmartReplacement}`);
+        
     if (accepted && isSmartReplacement) {
       // Handle smart replacement - apply both removal and addition as one replacement
-      const removalChange = lineChanges.find(c => c.type === 'removal');
-      const additionChange = lineChanges.find(c => c.type === 'addition');
-      
-      if (removalChange && additionChange) {
+      const additionChanges = otherChangesOnSameLine.filter(c => c.type === 'addition');
+      if (additionChanges.length > 0) {
+        const additionChange = additionChanges[0]; // Use the first addition change
         const lines = content.split('\n');
         const lineIndex = lineNumber - 1;
-
+        
+        console.log(`🔍 DEBUG: Smart replacement - Line ${lineNumber}:`);
+        console.log(`  Original: "${lines[lineIndex]}"`);
+        console.log(`  New: "${additionChange.content.replace(/\\n/g, '\n')}"`);
+        
         if (lineIndex >= 0 && lineIndex < lines.length) {
           // Replace the entire line (removal + addition = replacement)
           lines[lineIndex] = additionChange.content.replace(/\\n/g, '\n');
-          console.log(`✅ DEBUG: Smart replacement on line ${lineNumber}: "${lines[lineIndex]}"`);
+          console.log(`✅ DEBUG: Smart replacement completed on line ${lineNumber}`);
         }
 
         // Update content
         const newContent = lines.join('\n');
         setContent(newContent);
         handleContentChange(newContent);
-
-        // Mark both changes as processed
-        setProcessedChanges(prev => new Set(prev).add(removalChange.id).add(additionChange.id));
+        
+        // Mark all changes on this line as processed
+        const allChangesOnLine = changes?.filter(c => 
+          (c.startLine || c.start_line) === lineNumber
+        ) || [];
+        
+        setProcessedChanges(prev => {
+          const newSet = new Set(prev);
+          allChangesOnLine.forEach(c => newSet.add(c.id));
+          return newSet;
+        });
         
         // Only dispatch one event for the smart replacement
         window.dispatchEvent(new CustomEvent('changeAccepted', { detail: { changeId, accepted } }));
@@ -149,9 +197,9 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
       // Apply individual change
       const lines = content.split('\n');
       const lineIndex = lineNumber - 1;
-
+      
       console.log(`🔍 DEBUG: Line ${lineNumber}, Type: ${change.type}`);
-
+      
       if (change.type === 'removal') {
         // Remove the line
         if (lineIndex >= 0 && lineIndex < lines.length) {
@@ -171,11 +219,11 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
           console.log(`✅ DEBUG: Replaced line ${lineNumber}`);
         }
       }
-
-      // Update content
+    
+    // Update content
       const newContent = lines.join('\n');
-      setContent(newContent);
-      handleContentChange(newContent);
+    setContent(newContent);
+    handleContentChange(newContent);
     }
 
     // Mark change as processed
@@ -203,7 +251,7 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
 
   console.log(`🔍 DEBUG: Active changes: ${activeChanges.length}, Total: ${changes?.length || 0}, Processed: ${processedChanges.size}`);
 
-  return (
+      return (
     <div className="flex h-full bg-slate-900">
       {/* Left Panel - LaTeX Content */}
       <div className="flex-1 flex flex-col">
@@ -225,9 +273,9 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
               placeholder="LaTeX content will appear here..."
               style={{ minHeight: '500px' }}
             />
-          </div>
-        </div>
-      </div>
+              </div>
+              </div>
+            </div>
 
       {/* Right Panel - Changes */}
       <div className="w-80 border-l border-slate-700 flex flex-col">
@@ -257,39 +305,38 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
                   </div>
                   
                   {/* Check if this is a smart replacement */}
-                  {lineChanges.length === 2 && 
-                   lineChanges.some(c => c.type === 'removal') && 
+                  {lineChanges.some(c => c.type === 'removal') && 
                    lineChanges.some(c => c.type === 'addition') && 
                    !lineChanges.some(c => processedChanges.has(c.id)) ? (
                     <div className="space-y-2">
                       <div className="bg-red-900/20 border border-red-500 rounded p-2">
                         <div className="text-red-300 text-sm font-mono line-through">
                           {lineChanges.find(c => c.type === 'removal')?.content.replace(/\\n/g, '\n')}
-                        </div>
+                    </div>
                         <div className="text-green-300 text-sm font-mono mt-1 whitespace-pre-wrap">
                           {lineChanges.find(c => c.type === 'addition')?.content.replace(/\\n/g, '\n')}
                         </div>
                       </div>
                       <div className="flex space-x-2">
-                        <Button
-                          size="sm"
+                    <Button
+                      size="sm"
                           variant="outline"
                           className="text-green-600 border-green-600 hover:bg-green-600 hover:text-white"
                           onClick={() => handleApplyChange(lineChanges.find(c => c.type === 'removal')!.id, true)}
                         >
                           <Check className="w-4 h-4 mr-1" />
                           Accept
-                        </Button>
-                        <Button
-                          size="sm"
+                    </Button>
+                    <Button
+                      size="sm"
                           variant="outline"
                           className="text-red-600 border-red-600 hover:bg-red-600 hover:text-white"
                           onClick={() => handleApplyChange(lineChanges.find(c => c.type === 'removal')!.id, false)}
                         >
                           <X className="w-4 h-4 mr-1" />
                           Reject
-                        </Button>
-                      </div>
+                    </Button>
+                  </div>
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -309,27 +356,27 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
                                 {change.type.toUpperCase()}
                               </span>
                               <span className="text-slate-300 font-mono text-sm whitespace-pre-wrap">{change.content.replace(/\\n/g, '\n')}</span>
-                            </div>
+                  </div>
                             <div className="flex space-x-2">
-                              <Button
-                                size="sm"
+                      <Button
+                        size="sm"
                                 variant="outline"
                                 className="text-green-600 border-green-600 hover:bg-green-600 hover:text-white"
-                                onClick={() => handleApplyChange(change.id, true)}
-                              >
+                        onClick={() => handleApplyChange(change.id, true)}
+                      >
                                 <Check className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                size="sm"
+                      </Button>
+                      <Button
+                        size="sm"
                                 variant="outline"
                                 className="text-red-600 border-red-600 hover:bg-red-600 hover:text-white"
-                                onClick={() => handleApplyChange(change.id, false)}
-                              >
+                        onClick={() => handleApplyChange(change.id, false)}
+                      >
                                 <X className="w-4 h-4" />
-                              </Button>
-                            </div>
+                      </Button>
+                    </div>
                           </div>
-                        </div>
+                      </div>
                       ))}
                     </div>
                   )}
