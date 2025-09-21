@@ -117,6 +117,10 @@ export const ResumeEditor = () => {
     if (changes.length > 0) {
       console.log('💾 DEBUG: Persisting changes to sessionStorage');
       sessionStorage.setItem('currentChanges', JSON.stringify(changes));
+    } else {
+      // Clear sessionStorage when no changes remain
+      console.log('🧹 DEBUG: No changes remaining, clearing sessionStorage');
+      sessionStorage.removeItem('currentChanges');
     }
   }, [changes]);
 

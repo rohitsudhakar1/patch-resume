@@ -26,14 +26,32 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
 
   console.log('🔍 DEBUG: LaTeXEditor received changes:', changes?.length || 0);
 
+  // Clean content immediately on mount if it exists
+  useEffect(() => {
+    if (content) {
+      const cleanedContent = cleanDuplicateContent(content);
+      if (cleanedContent !== content) {
+        console.log('🧹 DEBUG: Cleaning existing content on mount');
+        setContent(cleanedContent);
+        handleContentChange(cleanedContent);
+      }
+    }
+  }, []); // Run only once on mount
+
   // Load content from sessionStorage
   useEffect(() => {
     const projectData = sessionStorage.getItem('currentProject');
     if (projectData) {
       const project = JSON.parse(projectData);
       if (project.resume_tex) {
-        setContent(project.resume_tex);
-        console.log('📄 DEBUG: LaTeXEditor loaded content');
+        // Clean the content when loading
+        const cleanedContent = cleanDuplicateContent(project.resume_tex);
+        setContent(cleanedContent);
+        console.log('📄 DEBUG: LaTeXEditor loaded and cleaned content');
+        
+        // Update the project with cleaned content
+        project.resume_tex = cleanedContent;
+        sessionStorage.setItem('currentProject', JSON.stringify(project));
       }
     }
   }, []);
@@ -45,8 +63,14 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
       if (projectData) {
         const project = JSON.parse(projectData);
         if (project.resume_tex) {
-          setContent(project.resume_tex);
-          console.log('🔄 DEBUG: LaTeXEditor updated content');
+          // Clean the content when updating
+          const cleanedContent = cleanDuplicateContent(project.resume_tex);
+          setContent(cleanedContent);
+          console.log('🔄 DEBUG: LaTeXEditor updated and cleaned content');
+          
+          // Update the project with cleaned content
+          project.resume_tex = cleanedContent;
+          sessionStorage.setItem('currentProject', JSON.stringify(project));
         }
       }
     };
@@ -66,19 +90,37 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
   const cleanDuplicateContent = (content: string) => {
     const lines = content.split('\n');
     const cleanedLines: string[] = [];
-    const seenLines = new Set<string>();
+    let hasUniversity = false;
     
     for (const line of lines) {
       const trimmedLine = line.trim();
-      // Skip duplicate university entries
+      
+      // Handle university entries - keep only one
       if (trimmedLine.includes('\\textbf{') && trimmedLine.includes('Expected May 2026')) {
-        if (!seenLines.has(trimmedLine)) {
-          seenLines.add(trimmedLine);
+        if (!hasUniversity) {
+          hasUniversity = true;
           cleanedLines.push(line);
         }
-      } else {
-        cleanedLines.push(line);
+        // Skip duplicate university entries
+        continue;
       }
+      
+      // Handle malformed Personal Project entries
+      if (trimmedLine.includes('\\\\textbf{Personal Project}') || 
+          trimmedLine.includes('\\n\\\\textbf{Personal Project}')) {
+        // Skip malformed entries
+        continue;
+      }
+      
+      // Handle malformed itemize blocks
+      if (trimmedLine.includes('\\\\begin{itemize}') || 
+          trimmedLine.includes('\\\\item') ||
+          trimmedLine.includes('\\\\end{itemize}')) {
+        // Skip malformed LaTeX
+        continue;
+      }
+      
+      cleanedLines.push(line);
     }
     
     return cleanedLines.join('\n');
