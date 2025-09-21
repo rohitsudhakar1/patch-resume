@@ -146,8 +146,10 @@ export const ResumeEditor = () => {
         (c.startLine || c.start_line) === lineNumber
       );
       
-      const isSmartReplacement = change.type === 'removal' && 
-        otherChangesOnSameLine.some(c => c.type === 'addition');
+      const isSmartReplacement = (change.type === 'removal' && 
+        otherChangesOnSameLine.some(c => c.type === 'addition')) ||
+        (change.type === 'addition' && 
+        otherChangesOnSameLine.some(c => c.type === 'removal'));
       
       console.log(`🔍 DEBUG: ResumeEditor - Change ${changeId}:`);
       console.log(`  Type: ${change.type}`);

@@ -204,32 +204,56 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
     ) || [];
     
     console.log(`🔍 DEBUG: Line ${lineNumber} analysis:`);
+    console.log(`  Current change line: ${lineNumber}`);
     console.log(`  Other changes on same line: ${otherChangesOnSameLine.length}`);
+    console.log(`  All changes:`, changes?.map(c => ({
+      id: c.id,
+      type: c.type,
+      line: c.startLine || c.start_line,
+      content: c.content.substring(0, 50) + '...'
+    })));
     otherChangesOnSameLine.forEach(c => {
-      console.log(`    - ${c.id}: ${c.type} - "${c.content}"`);
+      console.log(`    - ${c.id}: ${c.type} - Line ${c.startLine || c.start_line} - "${c.content}"`);
     });
         
     // Check if this is part of a smart replacement (removal + addition on same line)
     const isSmartReplacement = change.type === 'removal' && 
       otherChangesOnSameLine.some(c => c.type === 'addition');
     
-    console.log(`🔍 DEBUG: Is smart replacement: ${isSmartReplacement}`);
+    // Also check if this is an addition with a removal on the same line
+    const isSmartReplacementFromAddition = change.type === 'addition' && 
+      otherChangesOnSameLine.some(c => c.type === 'removal');
+    
+    const isAnySmartReplacement = isSmartReplacement || isSmartReplacementFromAddition;
+    
+    console.log(`🔍 DEBUG: Is smart replacement (removal): ${isSmartReplacement}`);
+    console.log(`🔍 DEBUG: Is smart replacement (addition): ${isSmartReplacementFromAddition}`);
+    console.log(`🔍 DEBUG: Is any smart replacement: ${isAnySmartReplacement}`);
         
-    if (accepted && isSmartReplacement) {
+    if (accepted && isAnySmartReplacement) {
       // Handle smart replacement - apply both removal and addition as one replacement
       const additionChanges = otherChangesOnSameLine.filter(c => c.type === 'addition');
-      if (additionChanges.length > 0) {
-        const additionChange = additionChanges[0]; // Use the first addition change
+      const removalChanges = otherChangesOnSameLine.filter(c => c.type === 'removal');
+      
+      // Determine which change to use for the replacement
+      let replacementChange;
+      if (change.type === 'addition') {
+        replacementChange = change;
+      } else if (additionChanges.length > 0) {
+        replacementChange = additionChanges[0];
+      }
+      
+      if (replacementChange) {
         const lines = content.split('\n');
         const lineIndex = lineNumber - 1;
         
         console.log(`🔍 DEBUG: Smart replacement - Line ${lineNumber}:`);
         console.log(`  Original: "${lines[lineIndex]}"`);
-        console.log(`  New: "${additionChange.content.replace(/\\n/g, '\n')}"`);
+        console.log(`  New: "${replacementChange.content.replace(/\\n/g, '\n')}"`);
         
         if (lineIndex >= 0 && lineIndex < lines.length) {
           // Replace the entire line (removal + addition = replacement)
-          lines[lineIndex] = additionChange.content.replace(/\\n/g, '\n');
+          lines[lineIndex] = replacementChange.content.replace(/\\n/g, '\n');
           console.log(`✅ DEBUG: Smart replacement completed on line ${lineNumber}`);
         }
 
