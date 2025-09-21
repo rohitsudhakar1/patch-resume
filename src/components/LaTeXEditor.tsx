@@ -23,6 +23,7 @@ interface LaTeXEditorProps {
 export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorProps) {
   const [content, setContent] = useState<string>('');
   const [processedChanges, setProcessedChanges] = useState<Set<string>>(new Set());
+  const [lastChangeIds, setLastChangeIds] = useState<string>('');
 
   console.log('🔍 DEBUG: LaTeXEditor received changes:', changes?.length || 0);
 
@@ -82,10 +83,22 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
   // Clear processed changes when new changes come in
   useEffect(() => {
     if (changes && changes.length > 0) {
-      console.log('🔄 DEBUG: New changes received, clearing processed changes');
-      console.log('🔄 DEBUG: Change IDs:', changes.map(c => c.id));
-      console.log('🔄 DEBUG: Current processed changes before clearing:', Array.from(processedChanges));
-      setProcessedChanges(new Set());
+      const currentChangeIds = changes.map(c => c.id).join(',');
+      
+      // Only clear processed changes if these are truly new changes
+      if (currentChangeIds !== lastChangeIds) {
+        console.log('🔄 DEBUG: New changes received, clearing processed changes');
+        console.log('🔄 DEBUG: Change IDs:', changes.map(c => c.id));
+        console.log('🔄 DEBUG: Current processed changes before clearing:', Array.from(processedChanges));
+        
+        // Force clear processed changes and ensure they stay clear
+        setProcessedChanges(new Set());
+        setLastChangeIds(currentChangeIds);
+        
+        console.log('✅ DEBUG: Processed changes cleared for new changes');
+      } else {
+        console.log('🔄 DEBUG: Same changes received, not clearing processed changes');
+      }
     }
   }, [changes?.map(c => c.id).join(',')]);
 

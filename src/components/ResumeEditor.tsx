@@ -126,15 +126,11 @@ export const ResumeEditor = () => {
 
   // Load changes from sessionStorage on mount
   useEffect(() => {
+    // Clear any old changes from sessionStorage to prevent them from interfering
     const storedChanges = sessionStorage.getItem('currentChanges');
-    if (storedChanges && changes.length === 0) {
-      try {
-        const parsedChanges = JSON.parse(storedChanges);
-        console.log('📥 DEBUG: Loading changes from sessionStorage:', parsedChanges);
-        setChanges(parsedChanges);
-      } catch (error) {
-        console.log('⚠️ DEBUG: Error loading changes from sessionStorage:', error);
-      }
+    if (storedChanges) {
+      console.log('🧹 DEBUG: Clearing old changes from sessionStorage to prevent interference');
+      sessionStorage.removeItem('currentChanges');
     }
   }, []);
 
