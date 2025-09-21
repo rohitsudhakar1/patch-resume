@@ -1,156 +1,306 @@
-import { useState } from 'react';
-import { Button } from '@/components/ui/button';
+import React, { useState, useEffect } from 'react';
+import { Button } from './ui/button';
 import { Check, X } from 'lucide-react';
-import { Change } from './ResumeEditor';
+
+interface Change {
+  id: string;
+  type: 'addition' | 'removal' | 'replacement';
+  startLine: number;
+  endLine: number;
+  content: string;
+  accepted?: boolean | null;
+  // Backend field names for compatibility
+  start_line?: number;
+  end_line?: number;
+  pdf_regions?: Array<{x: number, y: number, width: number, height: number}>;
+}
 
 interface LaTeXEditorProps {
   changes: Change[];
-  onChangeAccept: (changeId: string, accepted: boolean) => void;
+  onContentChange?: (content: string) => void;
 }
 
-const sampleLatexContent = `\\documentclass{article}
-\\usepackage[letterpaper,margin=0.75in]{geometry}
-\\usepackage{enumitem}
-\\usepackage{hyperref}
+export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorProps) {
+  const [content, setContent] = useState<string>('');
+  const [processedChanges, setProcessedChanges] = useState<Set<string>>(new Set());
 
-\\begin{document}
+  console.log('🔍 DEBUG: LaTeXEditor received changes:', changes?.length || 0);
 
-\\begin{center}
-{\\Large \\textbf{John Smith}}\\\\
-Email: john.smith@email.com $\\bullet$ Phone: (555) 123-4567\\\\
-LinkedIn: linkedin.com/in/johnsmith $\\bullet$ GitHub: github.com/johnsmith
-\\end{center}
-
-\\section*{Professional Summary}
-Experienced software engineer with 5+ years building scalable web applications and leading technical teams. Proven track record of delivering high-impact solutions and mentoring junior developers.
-
-\\section*{Experience}
-\\textbf{Senior Software Engineer} \\hfill \\textit{2022 - Present}\\\\
-\\textit{TechCorp Inc.} \\hfill \\textit{San Francisco, CA}
-\\begin{itemize}[leftmargin=0.5in]
-%CHANGE_1_START%
-\\item Led cross-functional team of 8 engineers to deliver customer analytics platform
-\\item Implemented microservices architecture reducing system latency by 40\\%
-\\item Established CI/CD pipeline improving deployment frequency by 300\\%
-%CHANGE_1_END%
-\\item Collaborated with product managers to define technical requirements
-%CHANGE_2_START%
-\\item Basic project management tasks
-\\item Routine maintenance work
-%CHANGE_2_END%
-\\end{itemize}
-
-\\section*{Education}
-\\textbf{Bachelor of Science in Computer Science}\\\\
-\\textit{University of California, Berkeley} \\hfill \\textit{2018}
-
-\\section*{Skills}
-JavaScript, TypeScript, React, Node.js, Python, PostgreSQL, AWS, Docker, Kubernetes
-
-\\end{document}`;
-
-export const LaTeXEditor = ({ changes, onChangeAccept }: LaTeXEditorProps) => {
-  const [content, setContent] = useState(sampleLatexContent);
-
-  const renderContentWithChanges = () => {
-    const lines = content.split('\n');
-    const result: JSX.Element[] = [];
-    let i = 0;
-
-    while (i < lines.length) {
-      const currentLine = i + 1; // 1-indexed
-      const change = changes.find(c => 
-        currentLine >= c.startLine && currentLine <= c.endLine
-      );
-
-      if (change) {
-        const changeLines = lines.slice(change.startLine - 1, change.endLine);
-        
-        result.push(
-          <div
-            key={`change-${change.id}`}
-            className={`relative group ${
-              change.type === 'addition' 
-                ? 'bg-addition-bg border-l-2 border-addition' 
-                : 'bg-removal-bg border-l-2 border-removal opacity-60'
-            }`}
-          >
-            {/* Change content */}
-            <div className="py-1 px-3 font-mono text-sm whitespace-pre">
-              {changeLines.map((line, idx) => (
-                <div key={idx}>{line}</div>
-              ))}
-            </div>
-
-            {/* Action buttons */}
-            <div className="absolute right-2 top-1 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-              <Button
-                size="sm"
-                variant="ghost"
-                className={`h-6 w-6 p-0 ${
-                  change.accepted === true 
-                    ? 'bg-success text-white' 
-                    : 'hover:bg-success hover:text-white'
-                }`}
-                onClick={() => onChangeAccept(change.id, true)}
-              >
-                <Check className="w-3 h-3" />
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className={`h-6 w-6 p-0 ${
-                  change.accepted === false 
-                    ? 'bg-destructive text-white' 
-                    : 'hover:bg-destructive hover:text-white'
-                }`}
-                onClick={() => onChangeAccept(change.id, false)}
-              >
-                <X className="w-3 h-3" />
-              </Button>
-            </div>
-
-            {/* Keyboard shortcuts hint */}
-            <div className="absolute left-2 top-1 opacity-0 group-hover:opacity-100 transition-opacity">
-              <span className="text-xs text-muted-foreground bg-background px-1 rounded">
-                A: Accept | R: Reject
-              </span>
-            </div>
-          </div>
-        );
-
-        i = change.endLine; // Skip to end of change
-      } else {
-        result.push(
-          <div key={`line-${i}`} className="py-1 px-3 font-mono text-sm">
-            {lines[i]}
-          </div>
-        );
-        i++;
+  // Load content from sessionStorage
+  useEffect(() => {
+    const projectData = sessionStorage.getItem('currentProject');
+    if (projectData) {
+      const project = JSON.parse(projectData);
+      if (project.resume_tex) {
+        setContent(project.resume_tex);
+        console.log('📄 DEBUG: LaTeXEditor loaded content');
       }
     }
+  }, []);
 
-    return result;
+  // Listen for project updates
+  useEffect(() => {
+    const handleProjectUpdate = () => {
+      const projectData = sessionStorage.getItem('currentProject');
+      if (projectData) {
+        const project = JSON.parse(projectData);
+        if (project.resume_tex) {
+          setContent(project.resume_tex);
+          console.log('🔄 DEBUG: LaTeXEditor updated content');
+        }
+      }
+    };
+
+    window.addEventListener('projectUpdated', handleProjectUpdate);
+    return () => window.removeEventListener('projectUpdated', handleProjectUpdate);
+  }, []);
+
+  // Clear processed changes when new changes come in
+  useEffect(() => {
+    if (changes && changes.length > 0) {
+      console.log('🔄 DEBUG: New changes received, clearing processed changes');
+      setProcessedChanges(new Set());
+    }
+  }, [changes?.map(c => c.id).join(',')]);
+
+  const handleContentChange = async (newContent: string) => {
+    console.log('📝 DEBUG: Content changed');
+    setContent(newContent);
+
+    // Update sessionStorage
+    const projectData = sessionStorage.getItem('currentProject');
+    if (projectData) {
+      try {
+        const project = JSON.parse(projectData);
+        project.resume_tex = newContent;
+        sessionStorage.setItem('currentProject', JSON.stringify(project));
+
+        // Create project in backend
+        const response = await fetch('http://localhost:8000/project/recreate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(project),
+        });
+
+        if (response.ok) {
+          console.log('✅ DEBUG: Project updated in backend');
+        }
+      } catch (error) {
+        console.log('❌ DEBUG: Error updating project:', error);
+      }
+    }
+    
+    onContentChange?.(newContent);
   };
 
+  const handleApplyChange = (changeId: string, accepted: boolean) => {
+    console.log(`🔧 DEBUG: Applying change ${changeId}: ${accepted ? 'accepted' : 'rejected'}`);
+    
+    const change = changes?.find(c => c.id === changeId);
+    if (!change) {
+      console.log(`❌ DEBUG: Change ${changeId} not found`);
+      return;
+    }
+
+    if (accepted) {
+      // Apply the change to content
+      const lines = content.split('\n');
+      const lineNumber = change.startLine || change.start_line || 1;
+      const lineIndex = lineNumber - 1;
+
+      console.log(`🔍 DEBUG: Line ${lineNumber}, Type: ${change.type}, Content: "${change.content}"`);
+
+      if (change.type === 'removal') {
+        // Remove the line
+        if (lineIndex >= 0 && lineIndex < lines.length) {
+          lines.splice(lineIndex, 1);
+          console.log(`✅ DEBUG: Removed line ${lineNumber}`);
+        }
+      } else if (change.type === 'addition') {
+        // Add the line
+        if (lineIndex >= 0 && lineIndex <= lines.length) {
+          lines.splice(lineIndex, 0, change.content);
+          console.log(`✅ DEBUG: Added line at ${lineNumber}`);
+        }
+      } else if (change.type === 'replacement') {
+        // Replace the line
+        if (lineIndex >= 0 && lineIndex < lines.length) {
+          lines[lineIndex] = change.content;
+          console.log(`✅ DEBUG: Replaced line ${lineNumber}`);
+        }
+      }
+
+      // Update content
+      const newContent = lines.join('\n');
+      setContent(newContent);
+      handleContentChange(newContent);
+    }
+
+    // Mark change as processed
+    setProcessedChanges(prev => new Set(prev).add(changeId));
+    
+    // Dispatch event to parent
+    const event = new CustomEvent('changeAccepted', {
+      detail: { changeId, accepted }
+    });
+    window.dispatchEvent(event);
+  };
+
+  // Get active changes (not processed yet)
+  const activeChanges = (changes || []).filter(change => !processedChanges.has(change.id));
+
+  // Group changes by line number
+  const changesByLine = new Map<number, Change[]>();
+  activeChanges.forEach(change => {
+    const lineNumber = change.startLine || change.start_line || 1;
+    if (!changesByLine.has(lineNumber)) {
+      changesByLine.set(lineNumber, []);
+    }
+    changesByLine.get(lineNumber)!.push(change);
+  });
+
+  console.log(`🔍 DEBUG: Active changes: ${activeChanges.length}, Total: ${changes?.length || 0}, Processed: ${processedChanges.size}`);
+
   return (
-    <div className="h-full flex flex-col bg-workspace-background">
-      <div className="flex-1 overflow-auto">
-        <div className="p-0">
-          {renderContentWithChanges()}
+    <div className="flex h-full bg-slate-900">
+      {/* Left Panel - LaTeX Content */}
+      <div className="flex-1 flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-slate-700">
+          <h2 className="text-lg font-semibold text-slate-200">LaTeX Editor</h2>
+          <div className="text-sm text-slate-400">
+            {activeChanges.length} changes pending
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-auto p-4">
+          <div className="max-w-none">
+            <textarea
+              value={content}
+              onChange={(e) => handleContentChange(e.target.value)}
+              className="w-full h-full bg-slate-800 text-slate-300 font-mono text-sm p-4 border border-slate-600 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="LaTeX content will appear here..."
+              style={{ minHeight: '500px' }}
+            />
+          </div>
         </div>
       </div>
-      
-      {/* Status bar */}
-      <div className="border-t border-border px-4 py-2 text-xs text-muted-foreground bg-card">
-        <div className="flex justify-between items-center">
-          <span>resume.tex</span>
-          <div className="flex gap-4">
-            <span>{changes.filter(c => c.type === 'addition').length} additions</span>
-            <span>{changes.filter(c => c.type === 'removal').length} removals</span>
+
+      {/* Right Panel - Changes */}
+      <div className="w-80 border-l border-slate-700 flex flex-col">
+        {/* Changes Header */}
+        <div className="p-4 border-b border-slate-700">
+          <h3 className="text-lg font-semibold text-slate-200">Changes</h3>
+          <div className="text-sm text-slate-400">
+            {activeChanges.length} pending
           </div>
+        </div>
+
+        {/* Changes List */}
+        <div className="flex-1 overflow-auto p-4">
+          {/* Debug info */}
+          <div className="mb-4 p-2 bg-slate-800 rounded text-xs text-slate-400">
+            <div>Total changes: {changes?.length || 0}</div>
+            <div>Active changes: {activeChanges.length}</div>
+            <div>Processed: {processedChanges.size}</div>
+          </div>
+          
+          {activeChanges.length > 0 ? (
+            <div className="space-y-4">
+              {Array.from(changesByLine.entries()).map(([lineNumber, lineChanges]) => (
+                <div key={lineNumber} className="border border-slate-600 rounded-lg p-4">
+                  <div className="text-sm font-semibold text-slate-300 mb-2">
+                    Line {lineNumber}
+                  </div>
+                  
+                  {/* Check if this is a smart replacement */}
+                  {lineChanges.length === 2 && 
+                   lineChanges.some(c => c.type === 'removal') && 
+                   lineChanges.some(c => c.type === 'addition') ? (
+                    <div className="space-y-2">
+                      <div className="bg-red-900/20 border border-red-500 rounded p-2">
+                        <div className="text-red-300 text-sm font-mono line-through">
+                          {lineChanges.find(c => c.type === 'removal')?.content}
+                        </div>
+                        <div className="text-green-300 text-sm font-mono mt-1">
+                          {lineChanges.find(c => c.type === 'addition')?.content}
+                        </div>
+                      </div>
+                      <div className="flex space-x-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-green-600 border-green-600 hover:bg-green-600 hover:text-white"
+                          onClick={() => handleApplyChange(lineChanges.find(c => c.type === 'removal')!.id, true)}
+                        >
+                          <Check className="w-4 h-4 mr-1" />
+                          Accept
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-red-600 border-red-600 hover:bg-red-600 hover:text-white"
+                          onClick={() => handleApplyChange(lineChanges.find(c => c.type === 'removal')!.id, false)}
+                        >
+                          <X className="w-4 h-4 mr-1" />
+                          Reject
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {lineChanges.map((change) => (
+                        <div key={change.id} className={`p-2 rounded border ${
+                          change.type === 'addition' ? 'bg-green-900/20 border-green-500' :
+                          change.type === 'removal' ? 'bg-red-900/20 border-red-500' :
+                          'bg-blue-900/20 border-blue-500'
+                        }`}>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <span className={`px-2 py-1 text-xs font-semibold rounded ${
+                                change.type === 'addition' ? 'bg-green-900 text-green-200' :
+                                change.type === 'removal' ? 'bg-red-900 text-red-200' :
+                                'bg-blue-900 text-blue-200'
+                              }`}>
+                                {change.type.toUpperCase()}
+                              </span>
+                              <span className="text-slate-300 font-mono text-sm">{change.content}</span>
+                            </div>
+                            <div className="flex space-x-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="text-green-600 border-green-600 hover:bg-green-600 hover:text-white"
+                                onClick={() => handleApplyChange(change.id, true)}
+                              >
+                                <Check className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="text-red-600 border-red-600 hover:bg-red-600 hover:text-white"
+                                onClick={() => handleApplyChange(change.id, false)}
+                              >
+                                <X className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center text-slate-400 py-8">
+              <div className="text-lg font-semibold mb-2">No Active Changes</div>
+              <div className="text-sm">All changes have been processed</div>
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
-};
+}
