@@ -110,13 +110,17 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
     ) || [];
 
     // Check if this is part of a smart replacement (removal + addition on same line)
-    const isSmartReplacement = change.type === 'removal' && 
-      otherChangesOnSameLine.some(c => c.type === 'addition');
+    const isSmartReplacement = (change.type === 'removal' && 
+      otherChangesOnSameLine.some(c => c.type === 'addition')) ||
+      (change.type === 'addition' && 
+      otherChangesOnSameLine.some(c => c.type === 'removal'));
 
     if (accepted && isSmartReplacement) {
       // Handle smart replacement - apply both removal and addition as one replacement
-      const additionChange = otherChangesOnSameLine.find(c => c.type === 'addition');
-      if (additionChange) {
+      const removalChange = lineChanges.find(c => c.type === 'removal');
+      const additionChange = lineChanges.find(c => c.type === 'addition');
+      
+      if (removalChange && additionChange) {
         const lines = content.split('\n');
         const lineIndex = lineNumber - 1;
 
@@ -132,7 +136,7 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
         handleContentChange(newContent);
 
         // Mark both changes as processed
-        setProcessedChanges(prev => new Set(prev).add(changeId).add(additionChange.id));
+        setProcessedChanges(prev => new Set(prev).add(removalChange.id).add(additionChange.id));
         
         // Only dispatch one event for the smart replacement
         window.dispatchEvent(new CustomEvent('changeAccepted', { detail: { changeId, accepted } }));

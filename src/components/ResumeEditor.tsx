@@ -146,14 +146,22 @@ export const ResumeEditor = () => {
         (c.startLine || c.start_line) === lineNumber
       );
       
-      const isSmartReplacement = change.type === 'removal' && 
-        otherChangesOnSameLine.some(c => c.type === 'addition');
+      const isSmartReplacement = (change.type === 'removal' && 
+        otherChangesOnSameLine.some(c => c.type === 'addition')) ||
+        (change.type === 'addition' && 
+        otherChangesOnSameLine.some(c => c.type === 'removal'));
       
       if (isSmartReplacement && accepted) {
         // Remove both changes for smart replacement
+        const removalChange = otherChangesOnSameLine.find(c => c.type === 'removal');
         const additionChange = otherChangesOnSameLine.find(c => c.type === 'addition');
-        setChanges(prev => prev.filter(c => c.id !== changeId && c.id !== additionChange?.id));
-        console.log('🔄 DEBUG: Smart replacement - removed both changes');
+        
+        if (removalChange && additionChange) {
+          setChanges(prev => prev.filter(c => c.id !== removalChange.id && c.id !== additionChange.id));
+          console.log('🔄 DEBUG: Smart replacement - removed both changes');
+        } else {
+          setChanges(prev => prev.filter(c => c.id !== changeId));
+        }
       } else {
         // Remove only this change
         setChanges(prev => prev.filter(c => c.id !== changeId));
