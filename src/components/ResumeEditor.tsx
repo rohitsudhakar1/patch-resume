@@ -137,8 +137,28 @@ export const ResumeEditor = () => {
   const handleChangeAccept = (changeId: string, accepted: boolean) => {
     console.log('🔧 DEBUG: handleChangeAccept called:', changeId, accepted);
     
-    // Simply remove the change from the list once it's processed
-    setChanges(prev => prev.filter(change => change.id !== changeId));
+    // Check if this is part of a smart replacement
+    const change = changes.find(c => c.id === changeId);
+    if (change) {
+      const lineNumber = change.startLine || change.start_line || 1;
+      const otherChangesOnSameLine = changes.filter(c => 
+        c.id !== changeId && 
+        (c.startLine || c.start_line) === lineNumber
+      );
+      
+      const isSmartReplacement = change.type === 'removal' && 
+        otherChangesOnSameLine.some(c => c.type === 'addition');
+      
+      if (isSmartReplacement && accepted) {
+        // Remove both changes for smart replacement
+        const additionChange = otherChangesOnSameLine.find(c => c.type === 'addition');
+        setChanges(prev => prev.filter(c => c.id !== changeId && c.id !== additionChange?.id));
+        console.log('🔄 DEBUG: Smart replacement - removed both changes');
+      } else {
+        // Remove only this change
+        setChanges(prev => prev.filter(c => c.id !== changeId));
+      }
+    }
     
     // If a change was accepted, update the project state
     if (accepted) {
