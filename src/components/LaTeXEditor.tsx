@@ -83,6 +83,8 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
   useEffect(() => {
     if (changes && changes.length > 0) {
       console.log('🔄 DEBUG: New changes received, clearing processed changes');
+      console.log('🔄 DEBUG: Change IDs:', changes.map(c => c.id));
+      console.log('🔄 DEBUG: Current processed changes before clearing:', Array.from(processedChanges));
       setProcessedChanges(new Set());
     }
   }, [changes?.map(c => c.id).join(',')]);
@@ -165,6 +167,12 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
     const change = changes?.find(c => c.id === changeId);
     if (!change) {
       console.log(`❌ DEBUG: Change ${changeId} not found`);
+      return;
+    }
+    
+    // Check if change is already processed
+    if (processedChanges.has(changeId)) {
+      console.log(`⚠️ DEBUG: Change ${changeId} already processed, ignoring`);
       return;
     }
     
@@ -279,7 +287,11 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
   };
 
   // Get active changes (not processed yet)
-  const activeChanges = (changes || []).filter(change => !processedChanges.has(change.id));
+  const activeChanges = (changes || []).filter(change => {
+    const isProcessed = processedChanges.has(change.id);
+    console.log(`🔍 DEBUG: Change ${change.id} processed: ${isProcessed}`);
+    return !isProcessed;
+  });
 
   // Group changes by line number
   const changesByLine = new Map<number, Change[]>();
@@ -292,6 +304,8 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
   });
 
   console.log(`🔍 DEBUG: Active changes: ${activeChanges.length}, Total: ${changes?.length || 0}, Processed: ${processedChanges.size}`);
+  console.log(`🔍 DEBUG: Processed change IDs:`, Array.from(processedChanges));
+  console.log(`🔍 DEBUG: All change IDs:`, changes?.map(c => c.id) || []);
 
       return (
     <div className="flex h-full bg-slate-900">
