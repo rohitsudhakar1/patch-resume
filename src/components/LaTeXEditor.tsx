@@ -467,6 +467,18 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
           {activeChanges.length > 0 ? (
             <div className="space-y-4">
               {console.log(`🔍 DEBUG: Rendering ${Array.from(changesByLine.entries()).length} line groups`)}
+              {console.log(`🔍 DEBUG: Active changes details:`, activeChanges.map(c => ({ id: c.id, type: c.type, line: c.startLine || c.start_line, content: c.content.substring(0, 50) + '...' })))}
+              
+              {/* Debug: Show all active changes without grouping */}
+              <div className="mb-4 p-2 bg-yellow-900/20 border border-yellow-500 rounded text-xs">
+                <div className="text-yellow-300 font-semibold mb-2">DEBUG: All Active Changes</div>
+                {activeChanges.map(change => (
+                  <div key={change.id} className="text-yellow-200 mb-1">
+                    {change.id}: {change.type} on line {change.startLine || change.start_line} - {change.content.substring(0, 50)}...
+                  </div>
+                ))}
+              </div>
+              
               {Array.from(changesByLine.entries()).map(([lineNumber, lineChanges]) => (
                 <div key={lineNumber} className="border border-slate-600 rounded-lg p-4">
                   <div className="text-sm font-semibold text-slate-300 mb-2">
@@ -551,6 +563,51 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
                   )}
                 </div>
               ))}
+              
+              {/* Fallback: Show individual changes if line grouping fails */}
+              {Array.from(changesByLine.entries()).length === 0 && activeChanges.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-sm font-semibold text-slate-300 mb-2">Individual Changes (Fallback)</div>
+                  {activeChanges.map(change => (
+                    <div key={change.id} className={`p-2 rounded border ${
+                      change.type === 'addition' ? 'bg-green-900/20 border-green-500' :
+                      change.type === 'removal' ? 'bg-red-900/20 border-red-500' :
+                      'bg-blue-900/20 border-blue-500'
+                    }`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2">
+                          <span className={`px-2 py-1 text-xs font-semibold rounded ${
+                            change.type === 'addition' ? 'bg-green-900 text-green-200' :
+                            change.type === 'removal' ? 'bg-red-900 text-red-200' :
+                            'bg-blue-900 text-blue-200'
+                          }`}>
+                            {change.type.toUpperCase()}
+                          </span>
+                          <span className="text-slate-300 font-mono text-sm whitespace-pre-wrap">{change.content.replace(/\\n/g, '\n')}</span>
+                        </div>
+                        <div className="flex space-x-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-green-600 border-green-600 hover:bg-green-600 hover:text-white"
+                            onClick={() => handleApplyChange(change.id, true)}
+                          >
+                            <Check className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-red-600 border-red-600 hover:bg-red-600 hover:text-white"
+                            onClick={() => handleApplyChange(change.id, false)}
+                          >
+                            <X className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <div className="text-center text-slate-400 py-8">
