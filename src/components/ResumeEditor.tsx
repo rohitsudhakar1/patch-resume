@@ -166,9 +166,22 @@ export const ResumeEditor = () => {
         setChanges(prev => prev.filter(c => (c.startLine || c.start_line) !== lineNumber));
         console.log('🔄 DEBUG: Smart replacement - removed all changes on line');
       } else {
-        // Remove only this change
-        console.log(`🔄 DEBUG: Individual change - removing ${changeId}`);
-        setChanges(prev => prev.filter(c => c.id !== changeId));
+        // Check if this is an addition that should be treated as part of a replacement
+        const hasRemovalOnSameLine = changes.some(c => 
+          c.id !== changeId && 
+          (c.startLine || c.start_line) === lineNumber && 
+          c.type === 'removal'
+        );
+        
+        if (hasRemovalOnSameLine && change.type === 'addition') {
+          // This addition is part of a replacement, remove both changes
+          console.log(`🔄 DEBUG: Addition with removal on same line - removing both changes`);
+          setChanges(prev => prev.filter(c => (c.startLine || c.start_line) !== lineNumber));
+        } else {
+          // Remove only this change
+          console.log(`🔄 DEBUG: Individual change - removing ${changeId}`);
+          setChanges(prev => prev.filter(c => c.id !== changeId));
+        }
       }
     }
     

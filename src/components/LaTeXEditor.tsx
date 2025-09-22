@@ -335,18 +335,39 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
       const lineIndex = lineNumber - 1;
       
       console.log(`🔍 DEBUG: Line ${lineNumber}, Type: ${change.type}`);
+      console.log(`🔍 DEBUG: Current line content: "${lines[lineIndex]}"`);
       
       if (change.type === 'removal') {
         // Remove the line
         if (lineIndex >= 0 && lineIndex < lines.length) {
+          console.log(`🔍 DEBUG: Removing line ${lineNumber}: "${lines[lineIndex]}"`);
           lines.splice(lineIndex, 1);
           console.log(`✅ DEBUG: Removed line ${lineNumber}`);
         }
       } else if (change.type === 'addition') {
-        // Add the line
-        if (lineIndex >= 0 && lineIndex <= lines.length) {
-          lines.splice(lineIndex, 0, change.content.replace(/\\n/g, '\n'));
-          console.log(`✅ DEBUG: Added line at ${lineNumber}`);
+        // For additions, check if this is part of a replacement by looking for removal on same line
+        const hasRemovalOnSameLine = changes?.some(c => 
+          c.id !== changeId && 
+          (c.startLine || c.start_line) === lineNumber && 
+          c.type === 'removal' &&
+          !processedChanges.has(c.id)
+        );
+        
+        if (hasRemovalOnSameLine) {
+          // This is part of a replacement, replace the line instead of adding
+          if (lineIndex >= 0 && lineIndex < lines.length) {
+            console.log(`🔍 DEBUG: Replacing line ${lineNumber} (addition with removal on same line)`);
+            console.log(`🔍 DEBUG: Old: "${lines[lineIndex]}"`);
+            console.log(`🔍 DEBUG: New: "${change.content.replace(/\\n/g, '\n')}"`);
+            lines[lineIndex] = change.content.replace(/\\n/g, '\n');
+            console.log(`✅ DEBUG: Replaced line ${lineNumber}`);
+          }
+        } else {
+          // Regular addition
+          if (lineIndex >= 0 && lineIndex <= lines.length) {
+            lines.splice(lineIndex, 0, change.content.replace(/\\n/g, '\n'));
+            console.log(`✅ DEBUG: Added line at ${lineNumber}`);
+          }
         }
       } else if (change.type === 'replacement') {
         // Replace the line
@@ -356,10 +377,10 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
         }
       }
     
-    // Update content
+      // Update content
       const newContent = lines.join('\n');
-    setContent(newContent);
-    handleContentChange(newContent);
+      setContent(newContent);
+      handleContentChange(newContent);
     }
 
     // Mark change as processed
