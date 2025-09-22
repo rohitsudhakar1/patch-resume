@@ -106,8 +106,10 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
     const lines = content.split('\n');
     const cleanedLines: string[] = [];
     let hasUniversity = false;
+    let hasArdentCapital = false;
     
-    for (const line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
       const trimmedLine = line.trim();
       
       // Handle university entries - keep only one
@@ -117,6 +119,16 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
           cleanedLines.push(line);
         }
         // Skip duplicate university entries
+        continue;
+      }
+      
+      // Handle duplicate Ardent Capital entries
+      if (trimmedLine.includes('Ardent Capital') || trimmedLine.includes('ardent')) {
+        if (!hasArdentCapital) {
+          hasArdentCapital = true;
+          cleanedLines.push(line);
+        }
+        // Skip duplicate Ardent entries
         continue;
       }
       
@@ -135,10 +147,38 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
         continue;
       }
       
+      // Handle orphaned \item entries (not inside itemize blocks)
+      if (trimmedLine.includes('\\item') && !trimmedLine.includes('\\begin{itemize}')) {
+        // Check if previous line has \begin{itemize}
+        const prevLine = i > 0 ? lines[i-1].trim() : '';
+        if (!prevLine.includes('\\begin{itemize}')) {
+          // This is an orphaned \item, skip it
+          continue;
+        }
+      }
+      
+      // Handle template placeholders
+      if (trimmedLine.includes('New Company Name') || 
+          trimmedLine.includes('Internship Role') ||
+          trimmedLine.includes('Brief description of your responsibilities')) {
+        // Skip template content
+        continue;
+      }
+      
       cleanedLines.push(line);
     }
     
-    return cleanedLines.join('\n');
+    let cleanedContent = cleanedLines.join('\n');
+    
+    // Fix document structure
+    if (!cleanedContent.includes('\\begin{document}')) {
+      const parts = cleanedContent.split('\\usepackage{hyperref}');
+      if (parts.length > 1) {
+        cleanedContent = parts[0] + '\\usepackage{hyperref}\n\n\\begin{document}\n\n' + parts[1];
+      }
+    }
+    
+    return cleanedContent;
   };
 
   const handleContentChange = async (newContent: string) => {
@@ -229,6 +269,14 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
     console.log(`🔍 DEBUG: Is smart replacement (removal): ${isSmartReplacement}`);
     console.log(`🔍 DEBUG: Is smart replacement (addition): ${isSmartReplacementFromAddition}`);
     console.log(`🔍 DEBUG: Is any smart replacement: ${isAnySmartReplacement}`);
+    
+    // Additional debugging for line matching
+    if (otherChangesOnSameLine.length > 0) {
+      console.log(`🔍 DEBUG: Found changes on same line, checking content matching:`);
+      otherChangesOnSameLine.forEach(otherChange => {
+        console.log(`  - ${otherChange.id}: "${otherChange.content}" vs current line: "${lines[lineNumber - 1] || 'undefined'}"`);
+      });
+    }
         
     if (accepted && isAnySmartReplacement) {
       // Handle smart replacement - apply both removal and addition as one replacement
