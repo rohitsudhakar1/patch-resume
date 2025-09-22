@@ -24,6 +24,7 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
   const [content, setContent] = useState<string>('');
   const [processedChanges, setProcessedChanges] = useState<Set<string>>(new Set());
   const [lastChangeIds, setLastChangeIds] = useState<string>('');
+  const [autoApply, setAutoApply] = useState<boolean>(false);
 
   console.log('🔍 DEBUG: LaTeXEditor received changes:', changes?.length || 0);
 
@@ -280,15 +281,25 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
         // Replace the entire line
         lines[lineIndex] = additionChange.content.replace(/\\n/g, '\n');
         
-        // Mark all changes on this line as processed
+        // Mark ALL changes on this line as processed (both removal and addition)
         const allChangesOnLine = changes?.filter(c => 
           (c.startLine || c.start_line) === lineNumber
         ) || [];
+        
+        console.log(`🔍 DEBUG: Marking ${allChangesOnLine.length} changes as processed:`, 
+          allChangesOnLine.map(c => c.id));
         
         setProcessedChanges(prev => {
           const newSet = new Set(prev);
           allChangesOnLine.forEach(c => newSet.add(c.id));
           return newSet;
+        });
+        
+        // Dispatch events for ALL changes on this line
+        allChangesOnLine.forEach(c => {
+          window.dispatchEvent(new CustomEvent('changeAccepted', { 
+            detail: { changeId: c.id, accepted: true } 
+          }));
         });
         
         console.log(`✅ DEBUG: Smart replacement completed on line ${lineNumber}`);
@@ -317,16 +328,26 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
       
       // Mark this change as processed
       setProcessedChanges(prev => new Set(prev).add(changeId));
+      
+      // Dispatch event for this change
+      window.dispatchEvent(new CustomEvent('changeAccepted', { detail: { changeId, accepted } }));
     }
     
     // Update content
     const newContent = lines.join('\n');
     setContent(newContent);
     handleContentChange(newContent);
-    
-    // Dispatch event to parent
-    window.dispatchEvent(new CustomEvent('changeAccepted', { detail: { changeId, accepted } }));
   };
+
+  // Auto-apply changes when autoApply is enabled
+  useEffect(() => {
+    if (autoApply && activeChanges.length > 0) {
+      console.log(`🚀 DEBUG: Auto-applying ${activeChanges.length} changes`);
+      activeChanges.forEach(change => {
+        handleApplyChange(change.id, true);
+      });
+    }
+  }, [autoApply, activeChanges]);
 
   // Get active changes (not processed yet)
   const activeChanges = (changes || []).filter(change => {
@@ -384,7 +405,33 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
       <div className="w-80 border-l border-slate-700 flex flex-col">
         {/* Changes Header */}
         <div className="p-4 border-b border-slate-700">
-          <h3 className="text-lg font-semibold text-slate-200">Changes</h3>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-lg font-semibold text-slate-200">Changes</h3>
+            <div className="flex items-center space-x-2">
+              <label className="flex items-center space-x-2 text-sm text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={autoApply}
+                  onChange={(e) => setAutoApply(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500"
+                />
+                <span>Auto-apply</span>
+              </label>
+              {!autoApply && activeChanges.length > 0 && (
+                <button
+                  onClick={() => {
+                    console.log(`🚀 DEBUG: Manually applying all ${activeChanges.length} changes`);
+                    activeChanges.forEach(change => {
+                      handleApplyChange(change.id, true);
+                    });
+                  }}
+                  className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                >
+                  Apply All
+                </button>
+              )}
+            </div>
+          </div>
           <div className="text-sm text-slate-400">
             {activeChanges.length} pending
           </div>
