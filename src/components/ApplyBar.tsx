@@ -13,23 +13,29 @@ export const ApplyBar = ({ hasChanges, acceptedCount, isCompiling, onApply, onDi
   if (!hasChanges) return null;
 
   return (
-    <div className="border-t border-border bg-card px-4 py-3">
+    <div className="border-t border-slate-700 bg-slate-800 px-4 py-3 shadow-sm flex-shrink-0">
       <div className="flex items-center justify-between max-w-4xl mx-auto">
         {/* Left side - Apply */}
         <div className="flex items-center gap-3">
           <Button 
-            onClick={onApply}
-            disabled={acceptedCount === 0 || isCompiling}
-            className="bg-success hover:bg-success/90 text-white"
+            onClick={() => {
+              console.log('🔧 DEBUG: Accept all button clicked');
+              console.log('📊 DEBUG: acceptedCount:', acceptedCount);
+              console.log('📊 DEBUG: isCompiling:', isCompiling);
+              onApply();
+            }}
+            disabled={isCompiling}
+            className="bg-green-600 hover:bg-green-700 text-white"
           >
             <Check className="w-4 h-4 mr-2" />
-            Apply accepted ({acceptedCount})
+            Accept all
           </Button>
           
           <Button 
             variant="outline"
             onClick={onDiscard}
             disabled={isCompiling}
+            className="border-slate-600 text-slate-300 hover:bg-slate-700"
           >
             <X className="w-4 h-4 mr-2" />
             Discard all
@@ -39,8 +45,8 @@ export const ApplyBar = ({ hasChanges, acceptedCount, isCompiling, onApply, onDi
         {/* Center - Status */}
         <div className="flex items-center gap-2">
           {isCompiling && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <div className="w-2 h-2 bg-compiling rounded-full animate-pulse" />
+            <div className="flex items-center gap-2 text-sm text-slate-400">
+              <div className="w-2 h-2 bg-cyan-500 rounded-full animate-pulse" />
               Compiling...
             </div>
           )}
@@ -51,7 +57,7 @@ export const ApplyBar = ({ hasChanges, acceptedCount, isCompiling, onApply, onDi
           <Button 
             variant="ghost" 
             size="sm"
-            className="text-xs text-muted-foreground"
+            className="text-xs text-slate-500"
             disabled
           >
             <RotateCcw className="w-3 h-3 mr-1" />
