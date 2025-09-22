@@ -339,6 +339,13 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
     handleContentChange(newContent);
   };
 
+  // Get active changes (not processed yet)
+  const activeChanges = (changes || []).filter(change => {
+    const isProcessed = processedChanges.has(change.id);
+    console.log(`🔍 DEBUG: Change ${change.id} processed: ${isProcessed}`);
+    return !isProcessed;
+  });
+
   // Auto-apply changes when autoApply is enabled
   useEffect(() => {
     if (autoApply && activeChanges.length > 0) {
@@ -348,13 +355,6 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
       });
     }
   }, [autoApply, activeChanges]);
-
-  // Get active changes (not processed yet)
-  const activeChanges = (changes || []).filter(change => {
-    const isProcessed = processedChanges.has(change.id);
-    console.log(`🔍 DEBUG: Change ${change.id} processed: ${isProcessed}`);
-    return !isProcessed;
-  });
 
   // Group changes by line number
   const changesByLine = new Map<number, Change[]>();
