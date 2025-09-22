@@ -387,6 +387,11 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
     }
     changesByLine.get(lineNumber)!.push(change);
   });
+  
+  console.log(`🔍 DEBUG: Changes by line:`, Array.from(changesByLine.entries()).map(([line, changes]) => ({
+    line,
+    changes: changes.map(c => ({ id: c.id, type: c.type, content: c.content.substring(0, 50) + '...' }))
+  })));
 
   console.log(`🔍 DEBUG: Active changes: ${activeChanges.length}, Total: ${changes?.length || 0}, Processed: ${processedChanges.size}`);
   console.log(`🔍 DEBUG: Processed change IDs:`, Array.from(processedChanges));
@@ -439,6 +444,7 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
           
           {activeChanges.length > 0 ? (
             <div className="space-y-4">
+              {console.log(`🔍 DEBUG: Rendering ${Array.from(changesByLine.entries()).length} line groups`)}
               {Array.from(changesByLine.entries()).map(([lineNumber, lineChanges]) => (
                 <div key={lineNumber} className="border border-slate-600 rounded-lg p-4">
                   <div className="text-sm font-semibold text-slate-300 mb-2">
