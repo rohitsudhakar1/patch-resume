@@ -137,53 +137,12 @@ export const ResumeEditor = () => {
   const handleChangeAccept = (changeId: string, accepted: boolean) => {
     console.log('🔧 DEBUG: handleChangeAccept called:', changeId, accepted);
     
-    // Check if this is part of a smart replacement
-    const change = changes.find(c => c.id === changeId);
-    if (change) {
-      const lineNumber = change.startLine || change.start_line || 1;
-      const otherChangesOnSameLine = changes.filter(c => 
-        c.id !== changeId && 
-        (c.startLine || c.start_line) === lineNumber
-      );
-      
-      const isSmartReplacement = (change.type === 'removal' && 
-        otherChangesOnSameLine.some(c => c.type === 'addition')) ||
-        (change.type === 'addition' && 
-        otherChangesOnSameLine.some(c => c.type === 'removal'));
-      
-      console.log(`🔍 DEBUG: ResumeEditor - Change ${changeId}:`);
-      console.log(`  Type: ${change.type}`);
-      console.log(`  Line: ${lineNumber}`);
-      console.log(`  Other changes on same line: ${otherChangesOnSameLine.length}`);
-      console.log(`  Is smart replacement: ${isSmartReplacement}`);
-      
-      if (isSmartReplacement && accepted) {
-        // Remove all changes on the same line for smart replacement
-        const allChangesOnSameLine = changes.filter(c => 
-          (c.startLine || c.start_line) === lineNumber
-        );
-        console.log(`🔄 DEBUG: Smart replacement - removing ${allChangesOnSameLine.length} changes on line ${lineNumber}`);
-        setChanges(prev => prev.filter(c => (c.startLine || c.start_line) !== lineNumber));
-        console.log('🔄 DEBUG: Smart replacement - removed all changes on line');
-      } else {
-        // Check if this is an addition that should be treated as part of a replacement
-        const hasRemovalOnSameLine = changes.some(c => 
-          c.id !== changeId && 
-          (c.startLine || c.start_line) === lineNumber && 
-          c.type === 'removal'
-        );
-        
-        if (hasRemovalOnSameLine && change.type === 'addition') {
-          // This addition is part of a replacement, remove both changes
-          console.log(`🔄 DEBUG: Addition with removal on same line - removing both changes`);
-          setChanges(prev => prev.filter(c => (c.startLine || c.start_line) !== lineNumber));
-        } else {
-          // Remove only this change
-          console.log(`🔄 DEBUG: Individual change - removing ${changeId}`);
-          setChanges(prev => prev.filter(c => c.id !== changeId));
-        }
-      }
-    }
+    // Simply remove the change from the list - LaTeXEditor handles the actual application
+    setChanges(prev => {
+      const newChanges = prev.filter(c => c.id !== changeId);
+      console.log(`🔄 DEBUG: Removed change ${changeId}, ${prev.length} -> ${newChanges.length} changes`);
+      return newChanges;
+    });
     
     // If a change was accepted, update the project state
     if (accepted) {

@@ -229,87 +229,56 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
       return;
     }
     
-    console.log(`🔍 DEBUG: Found change:`, {
+    if (!accepted) {
+      // Just mark as processed and return
+      setProcessedChanges(prev => new Set(prev).add(changeId));
+      window.dispatchEvent(new CustomEvent('changeAccepted', { detail: { changeId, accepted } }));
+      return;
+    }
+
+    // Apply the change using a more reliable approach
+    const lines = content.split('\n');
+    const lineNumber = change.startLine || change.start_line || 1;
+    const lineIndex = lineNumber - 1;
+    
+    console.log(`🔍 DEBUG: Applying change:`, {
       id: change.id,
       type: change.type,
-      startLine: change.startLine || change.start_line,
-      content: change.content
+      line: lineNumber,
+      content: change.content.substring(0, 100) + '...'
     });
-        
-    const lineNumber = change.startLine || change.start_line || 1;
+    
+    // Check if this is part of a smart replacement (removal + addition on same line)
     const otherChangesOnSameLine = changes?.filter(c => 
       c.id !== changeId && 
       (c.startLine || c.start_line) === lineNumber &&
       !processedChanges.has(c.id)
     ) || [];
     
-    console.log(`🔍 DEBUG: Line ${lineNumber} analysis:`);
-    console.log(`  Current change line: ${lineNumber}`);
-    console.log(`  Other changes on same line: ${otherChangesOnSameLine.length}`);
-    console.log(`  All changes:`, changes?.map(c => ({
-      id: c.id,
-      type: c.type,
-      line: c.startLine || c.start_line,
-      content: c.content.substring(0, 50) + '...'
-    })));
-    otherChangesOnSameLine.forEach(c => {
-      console.log(`    - ${c.id}: ${c.type} - Line ${c.startLine || c.start_line} - "${c.content}"`);
+    const hasRemoval = otherChangesOnSameLine.some(c => c.type === 'removal');
+    const hasAddition = otherChangesOnSameLine.some(c => c.type === 'addition');
+    const isSmartReplacement = (change.type === 'removal' && hasAddition) || 
+                              (change.type === 'addition' && hasRemoval);
+    
+    console.log(`🔍 DEBUG: Smart replacement check:`, {
+      hasRemoval,
+      hasAddition,
+      isSmartReplacement,
+      otherChangesCount: otherChangesOnSameLine.length
     });
-        
-    // Check if this is part of a smart replacement (removal + addition on same line)
-    const isSmartReplacement = change.type === 'removal' && 
-      otherChangesOnSameLine.some(c => c.type === 'addition');
     
-    // Also check if this is an addition with a removal on the same line
-    const isSmartReplacementFromAddition = change.type === 'addition' && 
-      otherChangesOnSameLine.some(c => c.type === 'removal');
-    
-    const isAnySmartReplacement = isSmartReplacement || isSmartReplacementFromAddition;
-    
-    console.log(`🔍 DEBUG: Is smart replacement (removal): ${isSmartReplacement}`);
-    console.log(`🔍 DEBUG: Is smart replacement (addition): ${isSmartReplacementFromAddition}`);
-    console.log(`🔍 DEBUG: Is any smart replacement: ${isAnySmartReplacement}`);
-    
-    // Additional debugging for line matching
-    if (otherChangesOnSameLine.length > 0) {
-      console.log(`🔍 DEBUG: Found changes on same line, checking content matching:`);
-      const lines = content.split('\n');
-      otherChangesOnSameLine.forEach(otherChange => {
-        console.log(`  - ${otherChange.id}: "${otherChange.content}" vs current line: "${lines[lineNumber - 1] || 'undefined'}"`);
-      });
-    }
-        
-    if (accepted && isAnySmartReplacement) {
-      // Handle smart replacement - apply both removal and addition as one replacement
-      const additionChanges = otherChangesOnSameLine.filter(c => c.type === 'addition');
-      const removalChanges = otherChangesOnSameLine.filter(c => c.type === 'removal');
+    if (isSmartReplacement) {
+      // Handle smart replacement - find the addition change to use as replacement
+      const additionChange = otherChangesOnSameLine.find(c => c.type === 'addition') || 
+                            (change.type === 'addition' ? change : null);
       
-      // Determine which change to use for the replacement
-      let replacementChange;
-      if (change.type === 'addition') {
-        replacementChange = change;
-      } else if (additionChanges.length > 0) {
-        replacementChange = additionChanges[0];
-      }
-      
-      if (replacementChange) {
-        const lines = content.split('\n');
-        const lineIndex = lineNumber - 1;
-        
-        console.log(`🔍 DEBUG: Smart replacement - Line ${lineNumber}:`);
+      if (additionChange && lineIndex >= 0 && lineIndex < lines.length) {
+        console.log(`🔍 DEBUG: Smart replacement on line ${lineNumber}:`);
         console.log(`  Original: "${lines[lineIndex]}"`);
-        console.log(`  New: "${replacementChange.content.replace(/\\n/g, '\n')}"`);
+        console.log(`  New: "${additionChange.content.replace(/\\n/g, '\n')}"`);
         
-        if (lineIndex >= 0 && lineIndex < lines.length) {
-          // Replace the entire line (removal + addition = replacement)
-          lines[lineIndex] = replacementChange.content.replace(/\\n/g, '\n');
-          console.log(`✅ DEBUG: Smart replacement completed on line ${lineNumber}`);
-        }
-
-        // Update content
-        const newContent = lines.join('\n');
-        setContent(newContent);
-        handleContentChange(newContent);
+        // Replace the entire line
+        lines[lineIndex] = additionChange.content.replace(/\\n/g, '\n');
         
         // Mark all changes on this line as processed
         const allChangesOnLine = changes?.filter(c => 
@@ -322,75 +291,41 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
           return newSet;
         });
         
-        // Only dispatch one event for the smart replacement
-        window.dispatchEvent(new CustomEvent('changeAccepted', { detail: { changeId, accepted } }));
-        
-        return;
+        console.log(`✅ DEBUG: Smart replacement completed on line ${lineNumber}`);
       }
-    }
-
-    if (accepted) {
-      // Apply individual change
-      const lines = content.split('\n');
-      const lineIndex = lineNumber - 1;
-      
-      console.log(`🔍 DEBUG: Line ${lineNumber}, Type: ${change.type}`);
-      console.log(`🔍 DEBUG: Current line content: "${lines[lineIndex]}"`);
-      
+    } else {
+      // Handle individual change
       if (change.type === 'removal') {
-        // Remove the line
         if (lineIndex >= 0 && lineIndex < lines.length) {
           console.log(`🔍 DEBUG: Removing line ${lineNumber}: "${lines[lineIndex]}"`);
           lines.splice(lineIndex, 1);
           console.log(`✅ DEBUG: Removed line ${lineNumber}`);
         }
       } else if (change.type === 'addition') {
-        // For additions, check if this is part of a replacement by looking for removal on same line
-        const hasRemovalOnSameLine = changes?.some(c => 
-          c.id !== changeId && 
-          (c.startLine || c.start_line) === lineNumber && 
-          c.type === 'removal' &&
-          !processedChanges.has(c.id)
-        );
-        
-        if (hasRemovalOnSameLine) {
-          // This is part of a replacement, replace the line instead of adding
-          if (lineIndex >= 0 && lineIndex < lines.length) {
-            console.log(`🔍 DEBUG: Replacing line ${lineNumber} (addition with removal on same line)`);
-            console.log(`🔍 DEBUG: Old: "${lines[lineIndex]}"`);
-            console.log(`🔍 DEBUG: New: "${change.content.replace(/\\n/g, '\n')}"`);
-            lines[lineIndex] = change.content.replace(/\\n/g, '\n');
-            console.log(`✅ DEBUG: Replaced line ${lineNumber}`);
-          }
-        } else {
-          // Regular addition
-          if (lineIndex >= 0 && lineIndex <= lines.length) {
-            lines.splice(lineIndex, 0, change.content.replace(/\\n/g, '\n'));
-            console.log(`✅ DEBUG: Added line at ${lineNumber}`);
-          }
+        if (lineIndex >= 0 && lineIndex <= lines.length) {
+          console.log(`🔍 DEBUG: Adding line at ${lineNumber}: "${change.content.replace(/\\n/g, '\n')}"`);
+          lines.splice(lineIndex, 0, change.content.replace(/\\n/g, '\n'));
+          console.log(`✅ DEBUG: Added line at ${lineNumber}`);
         }
       } else if (change.type === 'replacement') {
-        // Replace the line
         if (lineIndex >= 0 && lineIndex < lines.length) {
+          console.log(`🔍 DEBUG: Replacing line ${lineNumber}: "${lines[lineIndex]}" -> "${change.content.replace(/\\n/g, '\n')}"`);
           lines[lineIndex] = change.content.replace(/\\n/g, '\n');
           console.log(`✅ DEBUG: Replaced line ${lineNumber}`);
         }
       }
-    
-      // Update content
-      const newContent = lines.join('\n');
-      setContent(newContent);
-      handleContentChange(newContent);
+      
+      // Mark this change as processed
+      setProcessedChanges(prev => new Set(prev).add(changeId));
     }
-
-    // Mark change as processed
-    setProcessedChanges(prev => new Set(prev).add(changeId));
+    
+    // Update content
+    const newContent = lines.join('\n');
+    setContent(newContent);
+    handleContentChange(newContent);
     
     // Dispatch event to parent
-    const event = new CustomEvent('changeAccepted', {
-      detail: { changeId, accepted }
-    });
-    window.dispatchEvent(event);
+    window.dispatchEvent(new CustomEvent('changeAccepted', { detail: { changeId, accepted } }));
   };
 
   // Get active changes (not processed yet)
