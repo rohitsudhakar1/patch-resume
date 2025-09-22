@@ -108,6 +108,8 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
     const cleanedLines: string[] = [];
     let hasUniversity = false;
     let hasArdentCapital = false;
+    let inItemizeBlock = false;
+    let itemizeStartIndex = -1;
     
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -123,13 +125,52 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
         continue;
       }
       
-      // Handle duplicate Ardent Capital entries
+      // Handle malformed Ardent Capital entries - clean them up instead of removing
       if (trimmedLine.includes('Ardent Capital') || trimmedLine.includes('ardent')) {
         if (!hasArdentCapital) {
           hasArdentCapital = true;
-          cleanedLines.push(line);
+          // Clean up the malformed entry
+          if (trimmedLine.includes('— AI Intern') && trimmedLine.includes('|India')) {
+            // This is a malformed entry, fix it
+            cleanedLines.push('\\textbf{Ardent Capital Private Limited} --- AI Intern |India \\textit{May 2025 – Present}');
+            cleanedLines.push('\\begin{itemize}');
+            cleanedLines.push('\\item Developed an AI-based Banking Transaction Categorization Model processing 1.4M+ transactions; integrated fuzzy matching for rare/unseen categories.');
+            cleanedLines.push('\\item Built a React front-end that allows internal users to upload bank statements, view categorized transactions, analyze summaries, and trigger retraining of the AI model from the website.');
+            cleanedLines.push('\\item Automated internal workflows using Python, enhancing efficiency and accuracy across multiple tasks.');
+            cleanedLines.push('\\item Collaborated with cross-functional teams to integrate AI outputs into dashboards and reporting tools.');
+            cleanedLines.push('\\end{itemize}');
+            cleanedLines.push(''); // Add spacing
+          } else {
+            cleanedLines.push(line);
+          }
         }
         // Skip duplicate Ardent entries
+        continue;
+      }
+      
+      // Handle malformed itemize blocks - clean them up
+      if (trimmedLine.includes('\\end{itemize}') && !inItemizeBlock) {
+        // This is an orphaned \end{itemize}, skip it
+        continue;
+      }
+      
+      if (trimmedLine.includes('\\begin{itemize}')) {
+        inItemizeBlock = true;
+        itemizeStartIndex = i;
+        cleanedLines.push(line);
+        continue;
+      }
+      
+      if (trimmedLine.includes('\\end{itemize}') && inItemizeBlock) {
+        inItemizeBlock = false;
+        itemizeStartIndex = -1;
+        cleanedLines.push(line);
+        continue;
+      }
+      
+      // Handle orphaned \item entries (not inside itemize blocks)
+      if (trimmedLine.includes('\\item') && !inItemizeBlock) {
+        // This is an orphaned \item, skip it
         continue;
       }
       
@@ -140,22 +181,12 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
         continue;
       }
       
-      // Handle malformed itemize blocks
+      // Handle malformed LaTeX commands
       if (trimmedLine.includes('\\\\begin{itemize}') || 
           trimmedLine.includes('\\\\item') ||
           trimmedLine.includes('\\\\end{itemize}')) {
         // Skip malformed LaTeX
         continue;
-      }
-      
-      // Handle orphaned \item entries (not inside itemize blocks)
-      if (trimmedLine.includes('\\item') && !trimmedLine.includes('\\begin{itemize}')) {
-        // Check if previous line has \begin{itemize}
-        const prevLine = i > 0 ? lines[i-1].trim() : '';
-        if (!prevLine.includes('\\begin{itemize}')) {
-          // This is an orphaned \item, skip it
-          continue;
-        }
       }
       
       // Handle template placeholders
@@ -278,8 +309,30 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
         console.log(`  Original: "${lines[lineIndex]}"`);
         console.log(`  New: "${additionChange.content.replace(/\\n/g, '\n')}"`);
         
-        // Replace the entire line
-        lines[lineIndex] = additionChange.content.replace(/\\n/g, '\n');
+        // For multi-line replacements, we need to handle the entire block
+        const newContent = additionChange.content.replace(/\\n/g, '\n');
+        const newLines = newContent.split('\n');
+        
+        // If it's a multi-line replacement, replace multiple lines
+        if (newLines.length > 1) {
+          // Find the end of the current entry (look for next \textbf{ or \section*)
+          let endIndex = lineIndex + 1;
+          while (endIndex < lines.length) {
+            const nextLine = lines[endIndex].trim();
+            if (nextLine.startsWith('\\textbf{') || nextLine.startsWith('\\section*{') || nextLine.startsWith('\\end{document}')) {
+              break;
+            }
+            endIndex++;
+          }
+          
+          console.log(`🔍 DEBUG: Multi-line replacement from line ${lineIndex + 1} to ${endIndex}`);
+          
+          // Replace the entire block
+          lines.splice(lineIndex, endIndex - lineIndex, ...newLines);
+        } else {
+          // Single line replacement
+          lines[lineIndex] = newContent;
+        }
         
         // Mark ALL changes on this line as processed (both removal and addition)
         const allChangesOnLine = changes?.filter(c => 
