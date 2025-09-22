@@ -273,6 +273,7 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
     // Additional debugging for line matching
     if (otherChangesOnSameLine.length > 0) {
       console.log(`🔍 DEBUG: Found changes on same line, checking content matching:`);
+      const lines = content.split('\n');
       otherChangesOnSameLine.forEach(otherChange => {
         console.log(`  - ${otherChange.id}: "${otherChange.content}" vs current line: "${lines[lineNumber - 1] || 'undefined'}"`);
       });
