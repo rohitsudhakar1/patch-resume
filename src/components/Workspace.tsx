@@ -16,31 +16,31 @@ export const Workspace = ({ activeTab, onTabChange, changes, onChangeAccept, pro
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
       {/* Tab Bar */}
-      <div className="flex items-center border-b border-slate-600 bg-slate-800 shadow-sm flex-shrink-0">
+      <div className="flex items-center border-b border-slate-600/50 bg-slate-800/80 backdrop-blur-sm shadow-lg flex-shrink-0">
         <div className="flex">
           <Button
             variant="ghost"
             onClick={() => onTabChange('pdf')}
-            className={`rounded-none border-r border-slate-600 h-12 px-6 transition-all duration-200 ${
+            className={`rounded-none border-r border-slate-600/50 h-14 px-8 transition-all duration-300 ${
               activeTab === 'pdf' 
-                ? 'bg-slate-700 text-white shadow-inner border-b-2 border-b-blue-500' 
-                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+                ? 'bg-gradient-to-r from-slate-700 to-slate-600 text-white shadow-lg border-b-2 border-b-cyan-500' 
+                : 'text-slate-400 hover:text-white hover:bg-slate-700/50 hover:shadow-md'
             }`}
           >
-            <Eye className={`w-4 h-4 mr-2 ${activeTab === 'pdf' ? 'text-blue-400' : 'text-slate-500'}`} />
-            PDF Preview
+            <Eye className={`w-5 h-5 mr-3 ${activeTab === 'pdf' ? 'text-cyan-400' : 'text-slate-500'}`} />
+            <span className="font-medium">PDF Preview</span>
           </Button>
           <Button
             variant="ghost"
             onClick={() => onTabChange('latex')}
-            className={`rounded-none h-12 px-6 transition-all duration-200 ${
+            className={`rounded-none h-14 px-8 transition-all duration-300 ${
               activeTab === 'latex' 
-                ? 'bg-slate-700 text-white shadow-inner border-b-2 border-b-blue-500' 
-                : 'text-slate-400 hover:text-white hover:bg-slate-700/50'
+                ? 'bg-gradient-to-r from-slate-700 to-slate-600 text-white shadow-lg border-b-2 border-b-cyan-500' 
+                : 'text-slate-400 hover:text-white hover:bg-slate-700/50 hover:shadow-md'
             }`}
           >
-            <FileText className={`w-4 h-4 mr-2 ${activeTab === 'latex' ? 'text-blue-400' : 'text-slate-500'}`} />
-            LaTeX Source
+            <FileText className={`w-5 h-5 mr-3 ${activeTab === 'latex' ? 'text-cyan-400' : 'text-slate-500'}`} />
+            <span className="font-medium">LaTeX Source</span>
           </Button>
         </div>
       </div>

@@ -215,14 +215,14 @@ export const ResumeEditor = () => {
   }
 
   return (
-    <div className="flex h-screen bg-slate-900 min-w-0 overflow-hidden">
+    <div className="flex h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 min-w-0 overflow-hidden">
       {/* Chat Panel */}
-      <div className="w-96 border-r border-slate-700 bg-slate-800 shadow-sm flex-shrink-0 min-w-96 overflow-y-auto">
+      <div className="w-96 border-r border-slate-700/50 bg-slate-800/50 backdrop-blur-sm shadow-xl flex-shrink-0 min-w-96 overflow-y-auto">
         <ChatPanel />
       </div>
 
       {/* Main Workspace */}
-      <div className="flex-1 flex flex-col bg-slate-900 min-w-0 overflow-hidden">
+      <div className="flex-1 flex flex-col bg-slate-900/50 backdrop-blur-sm min-w-0 overflow-hidden">
         <div className="flex-1 min-h-0 overflow-hidden">
           <Workspace 
             activeTab={activeTab}

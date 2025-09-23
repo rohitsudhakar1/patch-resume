@@ -49,6 +49,14 @@ export const ChatPanel = () => {
     }
   }, [messages.length]);
 
+  // Handle Enter key press
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(e as any);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
@@ -159,10 +167,15 @@ export const ChatPanel = () => {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="p-4 border-b border-slate-700 bg-slate-800">
-        <div className="flex items-center gap-2">
-          <Sparkles className="w-5 h-5 text-cyan-400" />
-          <h2 className="font-semibold text-white">Resume Assistant</h2>
+      <div className="p-4 border-b border-slate-700 bg-gradient-to-r from-slate-800 to-slate-900">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full flex items-center justify-center">
+            <Sparkles className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h2 className="font-semibold text-white text-lg">AI Resume Assistant</h2>
+            <p className="text-sm text-slate-400">Powered by advanced AI</p>
+          </div>
         </div>
       </div>
 
@@ -171,13 +184,13 @@ export const ChatPanel = () => {
         {messages.map((message) => (
           <div
             key={message.id}
-            className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
+            className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'} group`}
           >
             <div
-              className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+              className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-lg transition-all duration-200 ${
                 message.type === 'user'
-                  ? 'bg-cyan-600 text-white ml-4'
-                  : 'bg-slate-800 border border-slate-600 text-slate-100 mr-4'
+                  ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white ml-4 hover:shadow-xl'
+                  : 'bg-slate-800/80 border border-slate-600/50 text-slate-100 mr-4 hover:bg-slate-800/90 backdrop-blur-sm'
               }`}
             >
                {message.type === 'assistant' ? (
@@ -216,14 +229,14 @@ export const ChatPanel = () => {
         
          {isLoading && (
            <div className="flex justify-start">
-             <div className="bg-slate-800 border border-slate-600 text-slate-100 rounded-lg px-3 py-2 text-sm mr-4">
-               <div className="flex items-center gap-2">
+             <div className="bg-slate-800/80 border border-slate-600/50 text-slate-100 rounded-2xl px-4 py-3 text-sm mr-4 shadow-lg backdrop-blur-sm">
+               <div className="flex items-center gap-3">
                  <div className="flex space-x-1">
-                   <div className="w-1 h-1 bg-cyan-400 rounded-full animate-bounce" style={{animationDelay: '0ms'}}></div>
-                   <div className="w-1 h-1 bg-cyan-400 rounded-full animate-bounce" style={{animationDelay: '150ms'}}></div>
-                   <div className="w-1 h-1 bg-cyan-400 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></div>
+                   <div className="w-2 h-2 bg-gradient-to-r from-cyan-400 to-blue-400 rounded-full animate-bounce" style={{animationDelay: '0ms'}}></div>
+                   <div className="w-2 h-2 bg-gradient-to-r from-cyan-400 to-blue-400 rounded-full animate-bounce" style={{animationDelay: '150ms'}}></div>
+                   <div className="w-2 h-2 bg-gradient-to-r from-cyan-400 to-blue-400 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></div>
                  </div>
-                 <span className="text-slate-400">Analyzing...</span>
+                 <span className="text-slate-300 font-medium">AI is thinking...</span>
                </div>
              </div>
            </div>
@@ -233,23 +246,33 @@ export const ChatPanel = () => {
 
        {/* Input */}
        <div className="p-4 border-t border-slate-700 bg-slate-800">
-         <form onSubmit={handleSubmit} className="flex gap-2">
-           <Textarea
-             ref={textareaRef}
-             value={input}
-             onChange={(e) => setInput(e.target.value)}
-             placeholder="Ask me to improve your resume..."
-             className="flex-1 bg-slate-700 border-slate-600 text-white placeholder-slate-400 resize-none min-h-[40px] max-h-[120px]"
-             disabled={isLoading}
-             rows={1}
-           />
+         <form onSubmit={handleSubmit} className="flex gap-3">
+           <div className="flex-1 relative">
+             <Textarea
+               ref={textareaRef}
+               value={input}
+               onChange={(e) => setInput(e.target.value)}
+               onKeyPress={handleKeyPress}
+               placeholder="Ask me to improve your resume... (Press Enter to send, Shift+Enter for new line)"
+               className="w-full bg-slate-700/50 border-slate-600 text-white placeholder-slate-400 resize-none min-h-[44px] max-h-[120px] pr-12 focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 transition-all duration-200"
+               disabled={isLoading}
+               rows={1}
+             />
+             <div className="absolute right-2 top-1/2 transform -translate-y-1/2 text-xs text-slate-500">
+               {isLoading ? 'Sending...' : 'Enter to send'}
+             </div>
+           </div>
            <Button 
              type="submit" 
              size="icon" 
              disabled={!input.trim() || isLoading}
-             className="shrink-0 bg-cyan-600 hover:bg-cyan-700"
+             className="shrink-0 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white shadow-lg hover:shadow-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
            >
-             <Send className="w-4 h-4" />
+             {isLoading ? (
+               <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+             ) : (
+               <Send className="w-4 h-4" />
+             )}
            </Button>
          </form>
        </div>
