@@ -180,7 +180,10 @@ export const ChatPanel = () => {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-900">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-900 scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-slate-800 hover:scrollbar-thumb-slate-500" style={{
+        scrollbarWidth: 'thin',
+        scrollbarColor: '#475569 #1e293b'
+      }}>
         {messages.map((message) => (
           <div
             key={message.id}
@@ -254,9 +257,13 @@ export const ChatPanel = () => {
                onChange={(e) => setInput(e.target.value)}
                onKeyPress={handleKeyPress}
                placeholder="Ask me to improve your resume... (Press Enter to send, Shift+Enter for new line)"
-               className="w-full bg-slate-700/50 border-slate-600 text-white placeholder-slate-400 resize-none min-h-[44px] max-h-[120px] pr-12 focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 transition-all duration-200"
+               className="w-full bg-slate-700/50 border-slate-600 text-white placeholder-slate-400 resize-none min-h-[48px] max-h-[140px] pr-12 py-3 px-4 focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 transition-all duration-200 scrollbar-thin scrollbar-thumb-slate-500 scrollbar-track-slate-700 hover:scrollbar-thumb-slate-400"
                disabled={isLoading}
                rows={1}
+               style={{
+                 scrollbarWidth: 'thin',
+                 scrollbarColor: '#64748b #1e293b'
+               }}
              />
              <div className="absolute right-2 top-1/2 transform -translate-y-1/2 text-xs text-slate-500">
                {isLoading ? 'Sending...' : 'Enter to send'}

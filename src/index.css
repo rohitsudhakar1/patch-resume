@@ -2,6 +2,62 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Custom scrollbar styles for a more professional look */
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+  
+  .scrollbar-thumb-slate-500 {
+    scrollbar-color: #64748b transparent;
+  }
+  
+  .scrollbar-thumb-slate-600 {
+    scrollbar-color: #475569 transparent;
+  }
+  
+  .scrollbar-track-slate-700 {
+    scrollbar-color: transparent #1e293b;
+  }
+  
+  .scrollbar-track-slate-800 {
+    scrollbar-color: transparent #1e293b;
+  }
+  
+  .hover\:scrollbar-thumb-slate-400:hover {
+    scrollbar-color: #94a3b8 transparent;
+  }
+  
+  .hover\:scrollbar-thumb-slate-500:hover {
+    scrollbar-color: #64748b transparent;
+  }
+}
+
+/* Webkit scrollbar styles for Chrome/Safari */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1e293b;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+::-webkit-scrollbar-corner {
+  background: #1e293b;
+}
+
 /* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
 All colors MUST be HSL.
 */
