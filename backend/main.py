@@ -1188,41 +1188,98 @@ async def get_pdf(project_id: str, t: Optional[str] = None):
         temp_dir = os.path.join(os.getcwd(), 'temp_latex')
         os.makedirs(temp_dir, exist_ok=True)
         
-        # Create a minimal LaTeX document that doesn't require additional packages
+        # Start from original LaTeX and preserve a professional preamble
         minimal_latex = project["resume_tex"]
-        
-        # Clean the LaTeX content to remove problematic sequences
+
+        # Helper: professional preamble (aligned with Overleaf-style resumes)
+        PROFESSIONAL_PREAMBLE = (
+            "\\documentclass[a4paper]{article}\n\n"
+            "% ---------- Margins ----------\n"
+            "\\usepackage[left=0.7in, right=0.7in, top=0.5in, bottom=0.5in]{geometry}\n\n"
+            "% ---------- Links ----------\n"
+            "\\usepackage[hidelinks]{hyperref}\n\n"
+            "% ---------- Lists / Titles ----------\n"
+            "\\usepackage{enumitem}\n\\usepackage{titlesec}\n\n"
+            "% ---------- Global tight spacing ----------\n"
+            "\\setlength{\\parindent}{0pt}\n\\setlength{\\parskip}{0pt}\n\\renewcommand{\\baselinestretch}{0.84}\n\\footnotesize\n\n"
+            "% Compact section spacing\n"
+            "\\titlespacing*{\\section}{0pt}{0.3ex}{0.5ex}\n\\titleformat{\\section}{\\normalsize\\bfseries}{}{}{}[]\n\n"
+            "% Compact bullets (global)\n"
+            "\\setlist[itemize]{leftmargin=*, label=\\textbullet, nosep, topsep=0.2ex, itemsep=0.2ex, parsep=0pt, partopsep=0pt}\n\n"
+            "% Thin separator line used under section titles\n"
+            "\\newcommand{\\sectionline}{%\n  \\par\\vspace{0.2ex}%\n  \\noindent\\rule{\\linewidth}{0.25pt}%\n  \\par\\vspace{0.2ex}%\n}\n\n"
+            "% Small vertical spacer between entries\n"
+            "\\newcommand{\\entryspace}{\\vspace{0.35em}}\n\n"
+        )
+
+        # Clean the LaTeX content to remove problematic sequences but don't nuke commands
         minimal_latex = clean_text_content(minimal_latex)
-        
-        # Remove ALL usepackage commands that cause interactive installation
-        minimal_latex = re.sub(r'\\usepackage\[[^\]]*\]\{[^}]+\}', '', minimal_latex)
-        minimal_latex = re.sub(r'\\usepackage\{[^}]+\}', '', minimal_latex)
-        
-        # Also remove any remaining usepackage lines
-        lines = minimal_latex.split('\n')
-        lines = [line for line in lines if not line.strip().startswith('\\usepackage')]
+
+        import re as _re_pdf
+
+        # Strip any garbage before \documentclass to avoid "nonsense at the top"
+        def strip_before_documentclass(tex: str) -> str:
+            idx = tex.find('\\documentclass')
+            return tex if idx == -1 else tex[idx:]
+
+        # If there is already a preamble, keep only safe packages and keep layout intact
+        allowed_packages = {"geometry", "hyperref", "enumitem", "titlesec"}
+
+        def filter_packages(tex: str) -> str:
+            lines = tex.split('\n')
+            filtered = []
+            for ln in lines:
+                if ln.strip().startswith('\\usepackage'):
+                    m = _re_pdf.search(r'\\usepackage(?:\[[^\]]*\])?\{([^}]+)\}', ln)
+                    if m:
+                        pkgs = [p.strip() for p in m.group(1).split(',')]
+                        keep_pkgs = [p for p in pkgs if p in allowed_packages]
+                        if keep_pkgs:
+                            filtered.append(f"\\usepackage{{{','.join(keep_pkgs)}}}")
+                        # skip non-allowed packages
+                        continue
+                filtered.append(ln)
+            return '\n'.join(filtered)
+
+        # Build final LaTeX with robust preamble
+        tex = minimal_latex.strip()
+        if '\\documentclass' in tex:
+            tex = strip_before_documentclass(tex)
+            tex = filter_packages(tex)
+        else:
+            # Inject professional preamble
+            tex = PROFESSIONAL_PREAMBLE + ("\\begin{document}\n\n" if '\\begin{document}' not in tex else "") + tex
+            if '\\end{document}' not in tex:
+                tex += "\n\\end{document}\n"
+
+        # Ensure begin/end document exists
+        if '\\begin{document}' not in tex:
+            tex = tex + "\n\\begin{document}\n"
+        if '\\end{document}' not in tex:
+            tex = tex + "\n\\end{document}\n"
+
+        # Center the first header block (name/contact) if not already centered
+        lines = tex.split('\n')
+        try:
+            begin_doc_idx = next(i for i, l in enumerate(lines) if '\\begin{document}' in l)
+        except StopIteration:
+            begin_doc_idx = 0
+        for i in range(begin_doc_idx + 1, min(begin_doc_idx + 10, len(lines))):
+            if lines[i].strip() == '':
+                continue
+            if '\\begin{center}' not in '\n'.join(lines[i:i+5]):
+                block = []
+                j = i
+                while j < len(lines) and j < i + 5 and lines[j].strip() != '':
+                    block.append(lines[j])
+                    j += 1
+                centered = ['\\begin{center}'] + block + ['\\end{center}', '']
+                lines = lines[:i] + centered + lines[j:]
+            break
         minimal_latex = '\n'.join(lines)
-        
-        # Ensure proper document structure
-        if not minimal_latex.strip().startswith('\\documentclass'):
-            minimal_latex = '\\documentclass{article}\n' + minimal_latex
-        if '\\begin{document}' not in minimal_latex:
-            minimal_latex += '\n\\begin{document}\n\\end{document}'
-        
-        # Clean up any remaining problematic sequences
-        minimal_latex = re.sub(r'\\[^a-zA-Z]', '', minimal_latex)  # Remove backslash followed by non-letters
-        minimal_latex = re.sub(r'\\n\\', '\n', minimal_latex)  # Remove \n\ sequences
-        minimal_latex = re.sub(r'\\Personal', 'Personal', minimal_latex)  # Fix \Personal
-        minimal_latex = re.sub(r'\\Jan', 'Jan', minimal_latex)  # Fix \Jan
-        
-        # Clean up multiple newlines
-        minimal_latex = re.sub(r'\n\s*\n\s*\n', '\n\n', minimal_latex)
-        
-        # Add basic document structure if missing
-        if '\\documentclass' not in minimal_latex:
-            minimal_latex = '\\documentclass{article}\n' + minimal_latex
-        if '\\begin{document}' not in minimal_latex:
-            minimal_latex += '\n\\begin{document}\n\\end{document}'
+
+        # Collapse excessive blank lines
+        minimal_latex = _re_pdf.sub(r"\n{3,}", "\n\n", minimal_latex)
         
         tex_file_path = os.path.join(temp_dir, f'resume_{project_id}.tex')
         with open(tex_file_path, 'w', encoding='utf-8') as tex_file:
