@@ -53,8 +53,8 @@ export const ChatPanel = () => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
 
-    console.log('🔍 DEBUG: ChatPanel - Starting patch generation');
-    console.log('📝 DEBUG: Instruction:', input.trim());
+    console.log('🔍 DEBUG: ChatPanel - Starting AI chat');
+    console.log('📝 DEBUG: Message:', input.trim());
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -64,119 +64,86 @@ export const ChatPanel = () => {
     };
 
     setMessages(prev => [...prev, userMessage]);
-    const instruction = input.trim();
+    const message = input.trim();
     setInput('');
     setIsLoading(true);
 
     try {
       // Get current project
       const projectData = sessionStorage.getItem('currentProject');
-      console.log('📁 DEBUG: Project data from sessionStorage:', projectData ? 'Found' : 'Not found');
-      
-      if (!projectData) {
-        throw new Error('No project found. Please upload a resume first.');
-      }
-
-      // Test API connection first
-      console.log('🔗 DEBUG: Testing API connection...');
-      const { apiClient } = await import('../lib/api');
-      
-      try {
-        const healthCheck = await apiClient.healthCheck();
-        console.log('✅ DEBUG: API health check successful:', healthCheck);
-      } catch (healthError) {
-        console.log('⚠️ DEBUG: API health check failed:', healthError);
-      }
-
-      // Get current project ID and data
       const currentProject = projectData ? JSON.parse(projectData) : null;
-      const projectId = currentProject?.id;
       
-      // Generate patch using backend
-      console.log('🤖 DEBUG: Calling generatePatch API...');
-      console.log('📁 DEBUG: Using project ID:', projectId);
-      console.log('📁 DEBUG: Project data available:', !!currentProject);
-      const patchResult = await apiClient.generatePatch(instruction, undefined, false, projectId, currentProject);
-      console.log('📥 DEBUG: Received patch result:', patchResult);
+      console.log('📁 DEBUG: Project data from sessionStorage:', currentProject ? 'Found' : 'Not found');
       
-      // Store patch result for the workspace
-      sessionStorage.setItem('currentPatch', JSON.stringify(patchResult));
-      console.log('💾 DEBUG: Stored patch in sessionStorage');
+      // Prepare chat history
+      const chatHistory = messages.map(m => ({
+        role: m.type === 'user' ? 'user' : 'assistant',
+        content: m.content
+      }));
       
-      // Generate a detailed response based on the instruction and changes
-      let aiResponse = `I've analyzed your request: "${instruction}"\n\n`;
-      
-      // Check if we need more information for complex additions
-      if (instruction.toLowerCase().includes('add') && (instruction.toLowerCase().includes('internship') || instruction.toLowerCase().includes('experience') || instruction.toLowerCase().includes('project'))) {
-        aiResponse += `**I need more details to create a proper entry:**\n\n`;
-        aiResponse += `To add this properly, I need:\n`;
-        aiResponse += `• **Company/Organization name**\n`;
-        aiResponse += `• **Your position/title**\n`;
-        aiResponse += `• **Location** (city, state/country)\n`;
-        aiResponse += `• **Start and end dates**\n`;
-        aiResponse += `• **Key achievements** (with numbers/metrics if possible)\n`;
-        aiResponse += `• **Technologies used** (for technical roles)\n\n`;
-        aiResponse += `Please provide these details so I can format it exactly like your existing entries.\n\n`;
-        aiResponse += `**Current changes prepared:**\n`;
-      } else {
-        aiResponse += `**What I found:**\n`;
+      // Call the AI chat endpoint
+      const response = await fetch('http://localhost:8000/llm/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: message,
+          chat_history: chatHistory,
+          current_resume: currentProject?.resume_tex,
+          context: {
+            has_resume: !!currentProject,
+            resume_length: currentProject?.resume_tex?.length || 0
+          }
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to get response from AI agent');
       }
-      
-      // Analyze the changes and provide detailed explanation
-      const additions = patchResult.changes.filter(c => c.type === 'addition');
-      const removals = patchResult.changes.filter(c => c.type === 'removal');
-      
-      aiResponse += `• ${additions.length} additions to make\n`;
-      aiResponse += `• ${removals.length} removals to make\n\n`;
-      
-      // Explain each change in detail
-      if (additions.length > 0) {
-        aiResponse += `**Additions I'm suggesting:**\n`;
-        additions.forEach((change, index) => {
-          aiResponse += `${index + 1}. ${change.content.replace(/\\textbf\{([^}]+)\}/g, '$1').replace(/\\/g, '')}\n`;
-        });
-        aiResponse += `\n`;
-      }
-      
-      if (removals.length > 0) {
-        aiResponse += `**Content I'm suggesting to remove:**\n`;
-        removals.forEach((change, index) => {
-          aiResponse += `${index + 1}. ${change.content.replace(/\\textbf\{([^}]+)\}/g, '$1').replace(/\\/g, '')}\n`;
-        });
-        aiResponse += `\n`;
-      }
-      
-      // Provide context about the changes
-      if (instruction.toLowerCase().includes('name') || instruction.toLowerCase().includes('change name')) {
-        aiResponse += `**Why this change:** I'm updating your name as requested. This will appear in the header section of your resume.\n\n`;
-      } else if (instruction.toLowerCase().includes('improve') || instruction.toLowerCase().includes('better')) {
-        aiResponse += `**Why these changes:** I've identified areas where your resume can be strengthened with more specific achievements, quantified results, and stronger action verbs.\n\n`;
-      } else if (instruction.toLowerCase().includes('add') || instruction.toLowerCase().includes('include')) {
-        aiResponse += `**Why these additions:** I'm adding relevant content to make your resume more comprehensive and competitive.\n\n`;
-      } else if (instruction.toLowerCase().includes('remove') || instruction.toLowerCase().includes('delete')) {
-        aiResponse += `**Why these removals:** I'm removing redundant or less impactful content to make your resume more concise and focused.\n\n`;
-      } else if (instruction.toLowerCase().includes('format') || instruction.toLowerCase().includes('structure')) {
-        aiResponse += `**Why these formatting changes:** I'm improving the structure and presentation to make your resume more professional and easier to read.\n\n`;
-      } else {
-        aiResponse += `**Why these changes:** I've analyzed your resume and identified specific improvements based on your request.\n\n`;
-      }
-      
-      aiResponse += `**Next steps:** Review each change in the workspace below. You can accept or reject individual changes. When you're ready, click 'Apply accepted' to compile the changes into your resume.`;
+
+      const data = await response.json();
+      console.log('📥 DEBUG: Received AI response:', data);
       
       const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
         type: 'assistant',
-        content: aiResponse,
+        content: data.response,
         timestamp: new Date()
       };
       setMessages(prev => [...prev, aiMessage]);
       
-      // Trigger workspace update
-      console.log('📡 DEBUG: Dispatching patchGenerated event');
-      window.dispatchEvent(new CustomEvent('patchGenerated', { detail: patchResult }));
+      // If this is a resume update, handle it
+      if (data.is_resume_update && data.resume_data && currentProject) {
+        console.log('🔄 DEBUG: Resume updated by AI agent');
+        const updatedProject = { ...currentProject, resume_tex: data.resume_data };
+        sessionStorage.setItem('currentProject', JSON.stringify(updatedProject));
+        window.dispatchEvent(new CustomEvent('projectUpdated', { detail: updatedProject }));
+      }
+      
+      // Check if this is a patch generation request (for backward compatibility)
+      const patchKeywords = ['change', 'modify', 'add', 'remove', 'delete', 'improve', 'fix', 'update'];
+      const isPatchRequest = patchKeywords.some(keyword => message.toLowerCase().includes(keyword));
+      
+      if (isPatchRequest && currentProject) {
+        console.log('🔧 DEBUG: Detected patch request, generating changes...');
+        try {
+          const { apiClient } = await import('../lib/api');
+          const patchResult = await apiClient.generatePatch(message, undefined, false, currentProject.id, currentProject);
+          console.log('📥 DEBUG: Generated patch result:', patchResult);
+          
+          // Store patch result for the workspace
+          sessionStorage.setItem('currentPatch', JSON.stringify(patchResult));
+          
+          // Trigger workspace update
+          window.dispatchEvent(new CustomEvent('patchGenerated', { detail: patchResult }));
+        } catch (patchError) {
+          console.log('⚠️ DEBUG: Patch generation failed, but chat response was successful:', patchError);
+        }
+      }
       
     } catch (error) {
-      console.error('❌ ERROR: Patch generation failed:', error);
+      console.error('❌ ERROR: AI chat failed:', error);
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         type: 'assistant',
