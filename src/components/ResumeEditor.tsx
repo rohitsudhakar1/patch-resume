@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { ChatPanel } from './ChatPanel';
 import { Workspace } from './Workspace';
 import { UploadModal } from './UploadModal';
+import ResumeAgent from './ResumeAgent';
 import { apiClient } from '../lib/api';
 
 export interface Change {
@@ -16,7 +17,7 @@ export interface Change {
 
 export const ResumeEditor = () => {
   const [showUploadModal, setShowUploadModal] = useState(true);
-  const [activeTab, setActiveTab] = useState<'pdf' | 'latex'>('pdf');
+  const [activeTab, setActiveTab] = useState<'pdf' | 'latex' | 'agent'>('pdf');
   const [isCompiling, setIsCompiling] = useState(false);
   const [changes, setChanges] = useState<Change[]>([]);
   const [currentProject, setCurrentProject] = useState<any>(null);
@@ -199,7 +200,7 @@ export const ResumeEditor = () => {
   };
 
 
-  const handleTabChange = (tab: 'pdf' | 'latex') => {
+  const handleTabChange = (tab: 'pdf' | 'latex' | 'agent') => {
     console.log('🔄 DEBUG: Tab changed to:', tab);
     setActiveTab(tab);
     

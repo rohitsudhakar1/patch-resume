@@ -905,6 +905,97 @@ Generate specific changes to implement this instruction."""
         print(f"❌ ERROR: Patch generation failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/llm/chat")
+def chat_with_agent(request: dict):
+    """Chat with the AI resume agent"""
+    try:
+        message = request.get('message', '')
+        chat_history = request.get('chat_history', [])
+        current_resume = request.get('current_resume')
+        context = request.get('context', {})
+        
+        print(f"🤖 DEBUG: Chat request: {message[:100]}...")
+        print(f"📚 DEBUG: Chat history length: {len(chat_history)}")
+        print(f"📄 DEBUG: Has current resume: {bool(current_resume)}")
+        
+        if not openai.api_key:
+            raise HTTPException(status_code=500, detail="OpenAI API key is required")
+        
+        # Build conversation context
+        system_prompt = """You are an expert AI resume assistant. You help users build, improve, and customize their resumes.
+
+Key capabilities:
+- Build resumes from scratch
+- Improve existing resumes
+- Adjust resume length (1-page, 2-page, etc.)
+- Optimize for specific job roles
+- Fix formatting and content issues
+- Provide career advice
+
+Guidelines:
+- Always maintain a helpful, professional tone
+- Ask clarifying questions when needed
+- If user wants a 1-page resume, ensure content fits
+- If content is too long, suggest what to remove or condense
+- Provide specific, actionable advice
+- When updating resume, return structured data
+
+When user asks for resume changes, respond with:
+- Clear explanation of what you're doing
+- Specific changes made
+- Any recommendations
+- Ask if they want further adjustments
+
+Remember: You're having a conversation, so be natural and engaging."""
+
+        # Build messages for OpenAI
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # Add chat history
+        for msg in chat_history[-10:]:  # Keep last 10 messages for context
+            messages.append({
+                "role": msg.get('role', 'user'),
+                "content": msg.get('content', '')
+            })
+        
+        # Add current message
+        messages.append({"role": "user", "content": message})
+        
+        print(f"📤 DEBUG: Sending to OpenAI with {len(messages)} messages")
+        
+        client = openai.OpenAI(api_key=openai.api_key)
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=messages,
+            max_tokens=1000,
+            temperature=0.7
+        )
+        
+        ai_response = response.choices[0].message.content
+        print(f"📥 DEBUG: Received response: {ai_response[:200]}...")
+        
+        # Check if this is a resume update request
+        is_resume_update = False
+        resume_data = None
+        
+        # Simple heuristics to detect resume update requests
+        update_keywords = ['update', 'change', 'modify', 'add', 'remove', 'delete', 'improve', 'fix']
+        if any(keyword in message.lower() for keyword in update_keywords):
+            is_resume_update = True
+            # For now, return the current resume (in a real implementation, you'd process the changes)
+            resume_data = current_resume
+        
+        return {
+            "response": ai_response,
+            "is_resume_update": is_resume_update,
+            "resume_data": resume_data,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        print(f"❌ ERROR: Chat failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+
 @app.post("/changes/apply")
 async def apply_changes(
     request: ApplyChangesRequest,
