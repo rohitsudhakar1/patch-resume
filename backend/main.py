@@ -940,6 +940,14 @@ Guidelines:
 - Provide specific, actionable advice
 - When updating resume, return structured data
 
+Formatting and writing quality:
+- Prefer concise, high-impact bullet points that start with strong verbs
+- Where possible, include metrics (%, x, time saved) and outcomes
+- Avoid first person; keep bullets single-line if possible
+- No run-on sentences; avoid clumsy wording
+- Keep sections clearly separated: Education, Work Experience, Projects, Skills
+- Do NOT left-align everything; assume a standard LaTeX article with clear sections and itemized bullets
+
 When user asks for resume changes, respond with:
 - Clear explanation of what you're doing
 - Specific changes made
@@ -978,11 +986,98 @@ Remember: You're having a conversation, so be natural and engaging."""
         is_resume_update = False
         resume_data = None
         
-        # Simple heuristics to detect resume update requests
+        # Simple heuristics to detect resume update or formatting requests
+        lowered = message.lower()
         update_keywords = ['update', 'change', 'modify', 'add', 'remove', 'delete', 'improve', 'fix']
-        if any(keyword in message.lower() for keyword in update_keywords):
+        format_keywords = ['format', 'formatting', 'make it one page', 'one page', 'polish', 'align', 'layout', 'clean up', 'make it professional', 'reformat', 'structure']
+
+        def _looks_like_latex(text: str) -> bool:
+            if not isinstance(text, str):
+                return False
+            return ('\\begin{document}' in text) or ('\\section*{' in text) or ('\\textbf{' in text)
+
+        def format_resume_latex(resume_tex: str) -> str:
+            """Normalize LaTeX resume for professional layout and alignment.
+            - Ensures documentclass, geometry, hyperref, enumitem
+            - Centers name/header block
+            - Uses \section* with consistent spacing
+            - Itemize with leftmargin=*, tight spacing
+            - Removes excessive blank lines and fixes spacing
+            """
+            try:
+                if not resume_tex:
+                    return resume_tex
+
+                import re
+
+                tex = resume_tex
+                # Ensure minimal preamble
+                if '\\documentclass' not in tex:
+                    tex = ("\\documentclass{article}\n"
+                           "\\usepackage[letterpaper,margin=0.75in]{geometry}\n"
+                           "\\usepackage{enumitem}\n\\setlist[itemize]{leftmargin=*, itemsep=0.2em, topsep=0.2em}\n"
+                           "\\usepackage[colorlinks=true,linkcolor=black,urlcolor=blue]{hyperref}\n"
+                           "\\begin{document}\n\n" + tex)
+                    if not tex.strip().endswith('\\end{document}'):
+                        tex += "\n\\end{document}\n"
+
+                # Ensure required packages and enumitem options
+                if 'enumitem' not in tex:
+                    tex = tex.replace('\\usepackage{hyperref}', '\\usepackage{enumitem}\n\\setlist[itemize]{leftmargin=*, itemsep=0.2em, topsep=0.2em}\n\\usepackage{hyperref}')
+                if '\\setlist[itemize]' not in tex:
+                    tex = tex.replace('\\usepackage{enumitem}', '\\usepackage{enumitem}\n\\setlist[itemize]{leftmargin=*, itemsep=0.2em, topsep=0.2em}')
+
+                # Center the very first bold line (name) by wrapping with center if not already
+                lines = tex.split('\n')
+                try:
+                    begin_doc_idx = next(i for i, l in enumerate(lines) if '\\begin{document}' in l)
+                except StopIteration:
+                    begin_doc_idx = 0
+
+                # Find first meaningful line after begin{document}
+                for i in range(begin_doc_idx + 1, min(begin_doc_idx + 10, len(lines))):
+                    if lines[i].strip() == '':
+                        continue
+                    # If not already centered, center block of first 1-3 lines (name + contact)
+                    if '\\begin{center}' not in '\n'.join(lines[i:i+5]):
+                        block = []
+                        j = i
+                        while j < len(lines) and j < i + 5 and lines[j].strip() != '':
+                            block.append(lines[j])
+                            j += 1
+                        centered = ['\\begin{center}'] + block + ['\\end{center}', '']
+                        lines = lines[:i] + centered + lines[j:]
+                    break
+
+                tex = '\n'.join(lines)
+
+                # Normalize sections to \section*
+                tex = re.sub(r"\\section\s*\{([^}]+)\}", r"\\section*{\1}", tex)
+                # Ensure a blank line after each section header
+                tex = re.sub(r"(\\section\*\{[^}]+\})\s*", r"\1\n", tex)
+
+                # Tighten multiple blank lines
+                tex = re.sub(r"\n{3,}", "\n\n", tex)
+
+                # Ensure itemize environments are well-formed
+                tex = tex.replace('\\begin{itemize}', '\\begin{itemize}')  # idempotent, placeholder for future checks
+                tex = tex.replace('\\end{itemize}', '\\end{itemize}')
+
+                return tex
+            except Exception:
+                return resume_tex
+
+        if any(k in lowered for k in format_keywords):
+            # Formatting intent detected
+            source = current_resume if _looks_like_latex(current_resume or '') else ai_response
+            if _looks_like_latex(source):
+                formatted = format_resume_latex(source)
+                is_resume_update = True
+                resume_data = formatted
+
+        if resume_data is None and any(keyword in lowered for keyword in update_keywords):
             is_resume_update = True
-            # For now, return the current resume (in a real implementation, you'd process the changes)
+            # Default behavior: pass through current resume; frontend may apply targeted patches
             resume_data = current_resume
         
         return {
