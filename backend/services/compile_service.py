@@ -1,373 +1,220 @@
 """
-Service for LaTeX compilation using Tectonic
+Compilation service for converting LaTeX to PDF using multiple engines
 """
 import os
 import subprocess
 import tempfile
-from typing import Optional, Dict, Any
+from typing import Tuple, Optional, List
 from pathlib import Path
-import shutil
-
-from ..config import settings
 
 class CompileService:
+    """Service for compiling LaTeX documents to PDF using multiple engines"""
+    
     def __init__(self):
-        self.tectonic_path = settings.tectonic_path
-        self.storage_path = Path(settings.storage_path)
-        self.storage_path.mkdir(exist_ok=True)
-
-    async def compile_latex(self, project_id: str, latex_content: str) -> Dict[str, Any]:
-        """Compile LaTeX to PDF using Tectonic with SyncTeX"""
+        # Compiler paths
+        self.miktex_path = os.path.join(
+            os.path.expanduser("~"), 
+            "AppData", "Local", "Programs", "MiKTeX", "miktex", "bin", "x64"
+        )
+        self.tectonic_path = os.path.join(
+            os.path.expanduser("~"), 
+            "scoop", "shims", "tectonic.exe"
+        )
+    
+    def compile_latex(self, latex_content: str, project_id: str, temp_dir: Optional[str] = None) -> Tuple[bool, str, str]:
+        """
+        Compile LaTeX content to PDF using multiple engines with fallback
         
-        # Create project directory
-        project_dir = self.storage_path / project_id
-        project_dir.mkdir(exist_ok=True)
+        Args:
+            latex_content: LaTeX document content
+            project_id: Project identifier for file naming
+            temp_dir: Optional temporary directory (will create if not provided)
+            
+        Returns:
+            Tuple of (success: bool, pdf_path: str, error_message: str)
+        """
+        print(f"🔧 DEBUG: Starting LaTeX compilation for project {project_id}")
+        
+        # Create temporary directory if not provided
+        if not temp_dir:
+            temp_dir = os.path.join(os.getcwd(), 'temp_latex')
+        
+        os.makedirs(temp_dir, exist_ok=True)
         
         # Write LaTeX file
-        tex_file = project_dir / "resume.tex"
-        with open(tex_file, 'w', encoding='utf-8') as f:
-            f.write(latex_content)
+        tex_file_path = os.path.join(temp_dir, f'resume_{project_id}.tex')
+        with open(tex_file_path, 'w', encoding='utf-8') as tex_file:
+            tex_file.write(latex_content)
         
-        try:
-            # Compile with Tectonic
-            result = await self._run_tectonic(project_dir)
-            
-            if result["success"]:
-                pdf_file = project_dir / "resume.pdf"
-                synctex_file = project_dir / "resume.synctex.gz"
+        # Define compilers in order of preference
+        compilers = self._get_compilers(tex_file_path)
+        
+        pdf_path = tex_file_path.replace('.tex', '.pdf')
+        
+        # Try each compiler
+        for compiler_name, cmd in compilers:
+            try:
+                print(f"🔧 DEBUG: Trying {compiler_name} compiler...")
                 
-                return {
-                    "success": True,
-                    "pdf_path": str(pdf_file),
-                    "synctex_path": str(synctex_file) if synctex_file.exists() else None,
-                    "project_id": project_id
-                }
-            else:
-                return {
-                    "success": False,
-                    "error": result["error"],
-                    "project_id": project_id
-                }
+                # Check if compiler exists
+                if not os.path.exists(cmd[0]):
+                    print(f"⚠️ DEBUG: {compiler_name} not found at {cmd[0]}, skipping")
+                    continue
                 
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "project_id": project_id
-            }
-
-    async def _run_tectonic(self, project_dir: Path) -> Dict[str, Any]:
-        """Run Tectonic compilation"""
-        
-        tex_file = project_dir / "resume.tex"
-        
-        # Tectonic command with SyncTeX enabled
-        cmd = [
-            self.tectonic_path,
-            "--synctex",  # Enable SyncTeX
-            "--keep-intermediates",  # Keep intermediate files
-            str(tex_file)
-        ]
-        
-        try:
-            # Run Tectonic
-            result = subprocess.run(
-                cmd,
-                cwd=project_dir,
-                capture_output=True,
-                text=True,
-                timeout=30  # 30 second timeout
-            )
-            
-            if result.returncode == 0:
-                return {"success": True}
-            else:
-                # Parse error output
-                error_lines = result.stderr.split('\n')
-                error_msg = self._extract_error_message(error_lines)
+                print(f"✅ DEBUG: {compiler_name} found, compiling...")
+                print(f"🔧 DEBUG: Command: {' '.join(cmd)}")
                 
-                return {
-                    "success": False,
-                    "error": error_msg,
-                    "full_stderr": result.stderr
-                }
+                # Clean up previous PDF
+                if os.path.exists(pdf_path):
+                    os.unlink(pdf_path)
                 
-        except subprocess.TimeoutExpired:
-            return {
-                "success": False,
-                "error": "Compilation timeout (30s)"
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"Compilation error: {str(e)}"
-            }
-
-    def _extract_error_message(self, error_lines: list) -> str:
-        """Extract meaningful error message from Tectonic output"""
-        
-        # Look for common error patterns
-        for line in error_lines:
-            if "Error:" in line:
-                return line.strip()
-            elif "Undefined control sequence" in line:
-                return f"Undefined LaTeX command: {line.strip()}"
-            elif "Missing $" in line:
-                return "Missing math mode delimiters"
-            elif "Runaway argument" in line:
-                return "Unmatched braces or brackets"
-            elif "File not found" in line:
-                return "Missing required file or package"
-        
-        # Fallback to first non-empty line
-        for line in error_lines:
-            if line.strip():
-                return line.strip()
-        
-        return "Unknown compilation error"
-
-    async def get_pdf_path(self, project_id: str) -> Optional[str]:
-        """Get path to compiled PDF"""
-        pdf_path = self.storage_path / project_id / "resume.pdf"
-        return str(pdf_path) if pdf_path.exists() else None
-
-    async def get_synctex_path(self, project_id: str) -> Optional[str]:
-        """Get path to SyncTeX file"""
-        synctex_path = self.storage_path / project_id / "resume.synctex.gz"
-        return str(synctex_path) if synctex_path.exists() else None
-
-    async def sync_pdf_to_tex(self, project_id: str, pdf_x: float, pdf_y: float) -> Dict[str, Any]:
-        """Convert PDF coordinates to LaTeX line numbers using SyncTeX"""
-        
-        synctex_path = await self.get_synctex_path(project_id)
-        if not synctex_path:
-            return {"success": False, "error": "No SyncTeX file found"}
-        
-        try:
-            # Use synctex command line tool
-            cmd = [
-                "synctex",
-                "view",
-                "-i", f"{int(pdf_x)}:{int(pdf_y)}:1",  # page 1
-                "-o", synctex_path
-            ]
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            
-            if result.returncode == 0:
-                # Parse synctex output to get line numbers
-                output_lines = result.stdout.split('\n')
-                for line in output_lines:
-                    if 'Input:' in line and 'Line:' in line:
-                        # Extract line number
-                        parts = line.split()
-                        for i, part in enumerate(parts):
-                            if part == 'Line:':
-                                line_num = int(parts[i + 1])
-                                return {
-                                    "success": True,
-                                    "line_number": line_num,
-                                    "file": "resume.tex"
-                                }
+                # Run compiler with timeout
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,  # 30 second timeout
+                    cwd=os.path.dirname(tex_file_path)
+                )
                 
-                return {"success": False, "error": "Could not map coordinates"}
-            else:
-                return {"success": False, "error": "SyncTeX failed"}
+                print(f"🔧 DEBUG: {compiler_name} finished with return code: {result.returncode}")
                 
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def sync_tex_to_pdf(self, project_id: str, line_number: int) -> Dict[str, Any]:
-        """Convert LaTeX line numbers to PDF coordinates using SyncTeX"""
-        
-        synctex_path = await self.get_synctex_path(project_id)
-        if not synctex_path:
-            return {"success": False, "error": "No SyncTeX file found"}
-        
-        try:
-            # Use synctex command line tool
-            cmd = [
-                "synctex",
-                "view",
-                "-l", str(line_number),
-                "-i", "1",  # page 1
-                "-o", synctex_path
-            ]
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            
-            if result.returncode == 0:
-                # Parse synctex output to get coordinates
-                output_lines = result.stdout.split('\n')
-                for line in output_lines:
-                    if 'Page:' in line and 'x:' in line and 'y:' in line:
-                        # Extract coordinates
-                        parts = line.split()
-                        x, y = 0, 0
-                        for i, part in enumerate(parts):
-                            if part == 'x:':
-                                x = float(parts[i + 1])
-                            elif part == 'y:':
-                                y = float(parts[i + 1])
-                        
-                        return {
-                            "success": True,
-                            "x": x,
-                            "y": y,
-                            "page": 1
-                        }
-                
-                return {"success": False, "error": "Could not map line number"}
-            else:
-                return {"success": False, "error": "SyncTeX failed"}
-                
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def auto_repair(self, project_id: str, error_line: int, error_context: str) -> Dict[str, Any]:
-        """Attempt to auto-repair common LaTeX errors"""
-        
-        project_dir = self.storage_path / project_id
-        tex_file = project_dir / "resume.tex"
-        
-        if not tex_file.exists():
-            return {"success": False, "error": "No LaTeX file found"}
-        
-        # Read current content
-        with open(tex_file, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        lines = content.split('\n')
-        
-        # Common repairs
-        repairs = [
-            self._repair_unmatched_braces,
-            self._repair_missing_dollars,
-            self._repair_undefined_commands,
-            self._repair_encoding_issues
-        ]
-        
-        for repair_func in repairs:
-            repaired_content = repair_func(lines, error_line, error_context)
-            if repaired_content != content:
-                # Try compiling the repaired version
-                test_result = await self._test_compilation(repaired_content, project_dir)
-                if test_result["success"]:
-                    # Save repaired content
-                    with open(tex_file, 'w', encoding='utf-8') as f:
-                        f.write(repaired_content)
+                if result.returncode == 0 and os.path.exists(pdf_path):
+                    print(f"✅ DEBUG: PDF generated successfully with {compiler_name}")
+                    return True, pdf_path, ""
+                else:
+                    print(f"⚠️ DEBUG: {compiler_name} failed")
+                    print(f"🔧 DEBUG: stdout: {result.stdout[:500]}")
+                    print(f"🔧 DEBUG: stderr: {result.stderr[:500]}")
                     
-                    return {
-                        "success": True,
-                        "message": "Auto-repair successful",
-                        "changes": test_result.get("changes", [])
-                    }
+                    # Clean up auxiliary files from failed compilation
+                    self._cleanup_aux_files(tex_file_path)
+                    
+            except subprocess.TimeoutExpired:
+                print(f"⏰ DEBUG: {compiler_name} timed out")
+                continue
+            except Exception as e:
+                print(f"💥 DEBUG: {compiler_name} error: {str(e)}")
+                continue
         
-        return {"success": False, "error": "Could not auto-repair"}
-
-    def _repair_unmatched_braces(self, lines: list, error_line: int, error_context: str) -> str:
-        """Repair unmatched braces"""
-        # Simple brace matching - add missing closing braces
-        content = '\n'.join(lines)
-        open_braces = content.count('{')
-        close_braces = content.count('}')
+        # All compilers failed
+        error_msg = "All LaTeX compilers failed. Please check your LaTeX syntax."
+        print(f"❌ DEBUG: {error_msg}")
+        return False, "", error_msg
+    
+    def _get_compilers(self, tex_file_path: str) -> List[Tuple[str, List[str]]]:
+        """Get list of available compilers with their commands"""
+        tex_file_path_abs = os.path.abspath(tex_file_path)
+        output_dir = os.path.dirname(tex_file_path_abs)
         
-        if open_braces > close_braces:
-            missing = open_braces - close_braces
-            content += '\n' + '}' * missing
-        
-        return content
-
-    def _repair_missing_dollars(self, lines: list, error_line: int, error_context: str) -> str:
-        """Repair missing math mode delimiters"""
-        content = '\n'.join(lines)
-        
-        # Look for unescaped special characters that should be in math mode
-        import re
-        
-        # Common patterns that need math mode
-        patterns = [
-            (r'([^$])([0-9]+%)', r'\1$\2$'),  # Percentages
-            (r'([^$])([0-9]+\.[0-9]+)', r'\1$\2$'),  # Decimals in context
+        compilers = [
+            # Tectonic (fastest, Overleaf-style)
+            ('tectonic', [
+                self.tectonic_path, 
+                '--synctex', 
+                '-Z', 
+                'continue-on-errors', 
+                tex_file_path_abs
+            ]),
+            
+            # latexmk (automated, handles dependencies)
+            ('latexmk', [
+                os.path.join(self.miktex_path, 'latexmk.exe'), 
+                '-pdf', 
+                '-interaction=nonstopmode', 
+                '-halt-on-error', 
+                '-file-line-error', 
+                '-output-directory', 
+                output_dir, 
+                tex_file_path_abs
+            ]),
+            
+            # xelatex (Unicode support)
+            ('xelatex', [
+                os.path.join(self.miktex_path, 'xelatex.exe'), 
+                '-interaction=nonstopmode', 
+                '-halt-on-error', 
+                '-file-line-error', 
+                '-output-directory', 
+                output_dir, 
+                tex_file_path_abs
+            ]),
+            
+            # pdflatex (standard, reliable)
+            ('pdflatex', [
+                os.path.join(self.miktex_path, 'pdflatex.exe'), 
+                '-interaction=nonstopmode', 
+                '-halt-on-error', 
+                '-file-line-error', 
+                '-output-directory', 
+                output_dir, 
+                tex_file_path_abs
+            ]),
+            
+            # lualatex (advanced features)
+            ('lualatex', [
+                os.path.join(self.miktex_path, 'lualatex.exe'), 
+                '-interaction=nonstopmode', 
+                '-halt-on-error', 
+                '-file-line-error', 
+                '-output-directory', 
+                output_dir, 
+                tex_file_path_abs
+            ])
         ]
         
-        for pattern, replacement in patterns:
-            content = re.sub(pattern, replacement, content)
+        return compilers
+    
+    def _cleanup_aux_files(self, tex_file_path: str):
+        """Clean up auxiliary files from failed compilation"""
+        aux_extensions = ['.aux', '.log', '.out', '.synctex.gz', '.fls', '.fdb_latexmk']
         
-        return content
-
-    def _repair_undefined_commands(self, lines: list, error_line: int, error_context: str) -> str:
-        """Repair undefined LaTeX commands"""
-        content = '\n'.join(lines)
-        
-        # Common undefined commands and their fixes
-        fixes = {
-            '\\textbf': '\\textbf',  # Already correct
-            '\\textit': '\\textit',  # Already correct
-            '\\item': '\\item',      # Already correct
-            '\\section': '\\section', # Already correct
-        }
-        
-        # Add missing packages for common commands
-        if '\\usepackage{enumitem}' not in content and '\\item' in content:
-            content = content.replace(
-                '\\usepackage{hyperref}',
-                '\\usepackage{hyperref}\n\\usepackage{enumitem}'
-            )
-        
-        return content
-
-    def _repair_encoding_issues(self, lines: list, error_line: int, error_context: str) -> str:
-        """Repair encoding issues"""
-        content = '\n'.join(lines)
-        
-        # Common encoding fixes
-        fixes = {
-            '"': r'``',  # Left double quote
-            '"': r"''",  # Right double quote
-            ''': r'`',   # Left single quote
-            ''': r"'",   # Right single quote
-            '–': r'--',  # En dash
-            '—': r'---', # Em dash
-        }
-        
-        for bad_char, good_char in fixes.items():
-            content = content.replace(bad_char, good_char)
-        
-        return content
-
-    async def _test_compilation(self, content: str, project_dir: Path) -> Dict[str, Any]:
-        """Test compilation of content"""
-        test_file = project_dir / "test.tex"
-        
+        for ext in aux_extensions:
+            aux_file = tex_file_path.replace('.tex', ext)
+            if os.path.exists(aux_file):
+                try:
+                    os.unlink(aux_file)
+                except:
+                    pass
+    
+    def cleanup_temp_files(self, tex_file_path: str, pdf_path: str):
+        """Clean up temporary files after successful compilation"""
         try:
-            with open(test_file, 'w', encoding='utf-8') as f:
-                f.write(content)
+            # Clean up auxiliary files
+            self._cleanup_aux_files(tex_file_path)
             
-            cmd = [self.tectonic_path, str(test_file)]
-            result = subprocess.run(
-                cmd,
-                cwd=project_dir,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
+            # Optionally clean up PDF (depending on use case)
+            # if os.path.exists(pdf_path):
+            #     os.unlink(pdf_path)
+                
+        except Exception as e:
+            print(f"⚠️ DEBUG: Error cleaning up temp files: {str(e)}")
+    
+    def get_compiler_status(self) -> dict:
+        """Get status of all available compilers"""
+        status = {}
+        
+        compilers = [
+            ('tectonic', self.tectonic_path),
+            ('latexmk', os.path.join(self.miktex_path, 'latexmk.exe')),
+            ('pdflatex', os.path.join(self.miktex_path, 'pdflatex.exe')),
+            ('xelatex', os.path.join(self.miktex_path, 'xelatex.exe')),
+            ('lualatex', os.path.join(self.miktex_path, 'lualatex.exe'))
+        ]
+        
+        for name, path in compilers:
+            status[name] = {
+                'available': os.path.exists(path),
+                'path': path
+            }
             
-            # Clean up test file
-            if test_file.exists():
-                test_file.unlink()
-            
-            return {"success": result.returncode == 0}
-            
-        except Exception:
-            return {"success": False}
+            if os.path.exists(path):
+                try:
+                    # Try to get version
+                    result = subprocess.run([path, '--version'], capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0:
+                        status[name]['version'] = result.stdout.split('\n')[0].strip()
+                except:
+                    status[name]['version'] = 'Unknown'
+        
+        return status

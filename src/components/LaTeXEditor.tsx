@@ -1,18 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Button } from './ui/button';
 import { Check, X } from 'lucide-react';
 
-interface Change {
+export interface Change {
   id: string;
   type: 'addition' | 'removal' | 'replacement';
   startLine: number;
   endLine: number;
   content: string;
   accepted?: boolean | null;
-  // Backend field names for compatibility
+  // backend compatibility
   start_line?: number;
   end_line?: number;
-  pdf_regions?: Array<{x: number, y: number, width: number, height: number}>;
+  pdf_regions?: Array<{ x: number; y: number; width: number; height: number }>;
 }
 
 interface LaTeXEditorProps {
@@ -20,638 +20,499 @@ interface LaTeXEditorProps {
   onContentChange?: (content: string) => void;
 }
 
+/* ------------------------------ Normalization ------------------------------ */
+
+type NormChange = {
+  id: string;
+  type: 'addition' | 'removal' | 'replacement';
+  start: number; // 1-indexed inclusive
+  end: number;   // 1-indexed inclusive
+  content: string;
+  contentLines: string[];
+};
+
+function normalizePatchContent(raw: string): string {
+  if (!raw) return '';
+  let s = raw;
+
+  // Canonicalize escaped newlines
+  s = s.replace(/\\n/g, '\n');
+
+  // Turn lone 'n' before LaTeX commands into newline+backslash
+  const cmd = '(begin|end|item|textbf|textit|section\\*?|subsection\\*?|documentclass|usepackage|href|url)';
+  s = s.replace(new RegExp(`\\bn(?=${cmd}\\b)`, 'g'), '\n\\');
+
+  // NEW: If a line *starts* with stray 'n' before Title text, treat as newline
+  // Example: "nPersonal Finance Tracker ..." -> "\nPersonal Finance Tracker ..."
+  s = s.replace(/(^|\n)n(?=[A-Z])/g, '$1\n');
+
+  // Add missing backslash before known LaTeX commands when preceded by space/beginning
+  s = s.replace(new RegExp(`(^|[\\s])(?<!\\\\)(${cmd})\\b`, 'g'), (_m, p1, p2) => `${p1}\\${p2}`);
+
+  // Cleanup
+  s = s.replace(/\r/g, '');
+  s = s.replace(/\n{3,}/g, '\n\n');
+  s = s.split('\n').map(l => l.replace(/[ \t]+$/g, '')).join('\n');
+
+  return s.trim();
+}
+
+function normalizeChanges(changes: Change[] = []): NormChange[] {
+  return changes.map((c) => {
+    const start = (c.startLine ?? c.start_line ?? 1) | 0;
+    const end = (c.endLine ?? c.end_line ?? start) | 0;
+    const fixed = normalizePatchContent(c.content ?? '');
+    return {
+      id: c.id,
+      type: c.type,
+      start: Math.max(1, start),
+      end: Math.max(start, end),
+      content: fixed,
+      contentLines: fixed ? fixed.split('\n') : [],
+    };
+  });
+}
+
+/** Gentle cleaner for editor content (preserves LaTeX). */
+function cleanEditorContent(raw: string): string {
+  if (!raw) return '';
+  let s = raw.replace(/\r/g, '');
+  s = s.replace(/\\\\(begin|end)\{itemize\}/g, '\\$1{itemize}');
+  s = s.replace(/\\\\item/g, '\\item');
+  s = s.replace(/\\n/g, '\n');
+  s = s.replace(/\n{4,}/g, '\n\n');
+  return s;
+}
+
+/* ------------------------ Block finding & line ops ------------------------- */
+
+function eqLine(a: string, b: string) {
+  return a.replace(/[ \t]+$/g, '') === b.replace(/[ \t]+$/g, '');
+}
+
+/** Find exact block in doc by content; returns [start,end] 1-indexed inclusive, or null. */
+function findBlockByContent(docLines: string[], blockLines: string[]): [number, number] | null {
+  if (!blockLines.length) return null;
+  const N = docLines.length;
+  const M = blockLines.length;
+  outer: for (let i = 0; i + M <= N; i++) {
+    for (let j = 0; j < M; j++) {
+      if (!eqLine(docLines[i + j], blockLines[j])) continue outer;
+    }
+    return [i + 1, i + M];
+  }
+  return null;
+}
+
+function replaceBlock(docLines: string[], start1: number, end1: number, newLines: string[]) {
+  const startIdx = Math.max(0, Math.min(docLines.length, start1 - 1));
+  const endIdx = Math.max(startIdx - 1, Math.min(docLines.length - 1, end1 - 1));
+  const before = docLines.slice(0, startIdx);
+  const after = docLines.slice(endIdx + 1);
+  return before.concat(newLines, after);
+}
+
+/** Insert AFTER a given anchor (1-indexed). If anchor > EOF, appends. */
+function insertAfter(docLines: string[], anchor1: number, newLines: string[]) {
+  const idx = Math.max(0, Math.min(docLines.length, anchor1)); // after -> not (anchor-1)
+  const before = docLines.slice(0, idx);
+  const after = docLines.slice(idx);
+  return before.concat(newLines, after);
+}
+
+/* ----------------------- Change-set fingerprint logic ---------------------- */
+
+function hashString(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i);
+  return h >>> 0;
+}
+function makeFingerprint(changes: Change[]): string {
+  const parts = changes.map(c => {
+    const start = c.startLine ?? c.start_line ?? 0;
+    const end = c.endLine ?? c.end_line ?? start;
+    const t = c.type;
+    const body = normalizePatchContent(c.content ?? '');
+    return `${t}:${start}:${end}:${hashString(body)}:${body.length}`;
+  });
+  return parts.sort().join('|');
+}
+
+/* -------------------------------- Diff view -------------------------------- */
+
+function DiffPreview({ content, normChanges }: { content: string; normChanges: NormChange[] }) {
+  const doc = useMemo(() => content.split('\n'), [content]);
+
+  type Range = { start: number; end: number };
+  const deletionRanges: Range[] = [];
+  const additionsAt = new Map<number, string[]>(); // anchor -> added lines
+
+  // Pair additions/removals for replacement visualization
+  const byStart = new Map<number, NormChange[]>();
+  normChanges.forEach(ch => {
+    if (!byStart.has(ch.start)) byStart.set(ch.start, []);
+    byStart.get(ch.start)!.push(ch);
+  });
+
+  for (const ch of normChanges) {
+    if (ch.type === 'removal' || ch.type === 'replacement') {
+      let range: Range | null = null;
+      if (ch.contentLines.length) {
+        const found = findBlockByContent(doc, ch.contentLines);
+        if (found) range = { start: found[0], end: found[1] };
+      }
+      if (!range) range = { start: ch.start, end: ch.end };
+      deletionRanges.push(range);
+
+      if (ch.type === 'replacement') {
+        const arr = additionsAt.get(range.start) ?? [];
+        arr.push(...ch.contentLines);
+        additionsAt.set(range.start, arr);
+      }
+    } else if (ch.type === 'addition') {
+      // If sibling removal exists and we can find it, anchor to its start; otherwise keep start
+      const siblings = byStart.get(ch.start) || [];
+      const sibRem = siblings.find(s => s.type === 'removal');
+      let anchor = ch.start;
+      if (sibRem && sibRem.contentLines.length) {
+        const found = findBlockByContent(doc, sibRem.contentLines);
+        if (found) anchor = found[0];
+      }
+      const arr = additionsAt.get(anchor) ?? [];
+      arr.push(...ch.contentLines);
+      additionsAt.set(anchor, arr);
+    }
+  }
+
+  const delMask = new Set<number>();
+  deletionRanges.forEach(r => { for (let i = r.start; i <= r.end; i++) delMask.add(i); });
+
+  type Row = { kind: 'ctx' | 'del' | 'add'; text: string; lineNo?: number; key: string };
+  const rows: Row[] = [];
+
+  for (let i = 1; i <= doc.length; i++) {
+    const text = doc[i - 1];
+    if (delMask.has(i)) rows.push({ kind: 'del', text, lineNo: i, key: `del-${i}` });
+    else rows.push({ kind: 'ctx', text, lineNo: i, key: `ctx-${i}` });
+
+    // PREVIEW: show additions AFTER anchor line i
+    const adds = additionsAt.get(i);
+    if (adds && adds.length) {
+      adds.forEach((t, idx) => rows.push({ kind: 'add', text: t, key: `add-${i}-${idx}` }));
+    }
+  }
+  for (const [anchor, adds] of additionsAt) {
+    if (anchor > doc.length) {
+      adds.forEach((t, idx) => rows.push({ kind: 'add', text: t, key: `add-${anchor}-${idx}` }));
+    }
+  }
+
+  return (
+    <div className="w-full h-full overflow-auto bg-slate-900 rounded border border-slate-700">
+      <div className="min-w-full">
+        {rows.map((row, idx) => {
+          const grid = 'grid grid-cols-[56px_1fr] items-start';
+          const gutter = 'select-none text-right pr-3 pl-2 border-r border-slate-700 text-slate-400';
+          let cls = 'whitespace-pre-wrap px-3 py-1 border-b border-slate-800';
+          if (row.kind === 'del') cls += ' bg-red-900/20 text-red-200 line-through';
+          else if (row.kind === 'add') cls += ' bg-green-900/20 text-green-200';
+          else cls += ' text-slate-300';
+
+          return (
+            <div key={row.key ?? idx} className={grid}>
+              <div className={gutter}>{row.lineNo ?? ''}</div>
+              <div className={cls}>{row.text === '' ? '\u00A0' : row.text}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------- Component -------------------------------- */
+
 export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorProps) {
   const [content, setContent] = useState<string>('');
-  const [processedChanges, setProcessedChanges] = useState<Set<string>>(new Set());
-  const [lastChangeIds, setLastChangeIds] = useState<string>('');
-  const [autoApply, setAutoApply] = useState<boolean>(false);
+  const [processedIds, setProcessedIds] = useState<Set<string>>(new Set());
+  const [lastFingerprint, setLastFingerprint] = useState<string>('');
+  const [autoApply, setAutoApply] = useState(false);
+  const [tab, setTab] = useState<'edit' | 'diff'>('diff');
 
-  console.log('🔍 DEBUG: LaTeXEditor received changes:', changes?.length || 0);
-
-  // Clean content immediately on mount if it exists
+  // Load from sessionStorage
   useEffect(() => {
-    if (content) {
-      const cleanedContent = cleanDuplicateContent(content);
-      if (cleanedContent !== content) {
-        console.log('🧹 DEBUG: Cleaning existing content on mount');
-        setContent(cleanedContent);
-        handleContentChange(cleanedContent);
-      }
-    }
-  }, []); // Run only once on mount
-
-  // Load content from sessionStorage
-  useEffect(() => {
-    const projectData = sessionStorage.getItem('currentProject');
-    if (projectData) {
-      const project = JSON.parse(projectData);
-      if (project.resume_tex) {
-        // Clean the content when loading
-        const cleanedContent = cleanDuplicateContent(project.resume_tex);
-        setContent(cleanedContent);
-        console.log('📄 DEBUG: LaTeXEditor loaded and cleaned content');
-        
-        // Update the project with cleaned content
-        project.resume_tex = cleanedContent;
-        sessionStorage.setItem('currentProject', JSON.stringify(project));
-      }
-    }
-  }, []);
-
-  // Listen for project updates
-  useEffect(() => {
-    const handleProjectUpdate = () => {
-      const projectData = sessionStorage.getItem('currentProject');
-      if (projectData) {
-        const project = JSON.parse(projectData);
-        if (project.resume_tex) {
-          // Clean the content when updating
-          const cleanedContent = cleanDuplicateContent(project.resume_tex);
-          setContent(cleanedContent);
-          console.log('🔄 DEBUG: LaTeXEditor updated and cleaned content');
-          
-          // Update the project with cleaned content
-          project.resume_tex = cleanedContent;
-          sessionStorage.setItem('currentProject', JSON.stringify(project));
-        }
-      }
-    };
-
-    window.addEventListener('projectUpdated', handleProjectUpdate);
-    return () => window.removeEventListener('projectUpdated', handleProjectUpdate);
-  }, []);
-
-  // Clear processed changes when new changes come in
-  useEffect(() => {
-    if (changes && changes.length > 0) {
-      const currentChangeIds = changes.map(c => c.id).join(',');
-      
-      // Only clear processed changes if these are truly new changes
-      if (currentChangeIds !== lastChangeIds) {
-        console.log('🔄 DEBUG: New changes received, clearing processed changes');
-        console.log('🔄 DEBUG: Change IDs:', changes.map(c => c.id));
-        console.log('🔄 DEBUG: Current processed changes before clearing:', Array.from(processedChanges));
-        
-        // Force clear processed changes and ensure they stay clear
-        setProcessedChanges(new Set());
-        setLastChangeIds(currentChangeIds);
-        
-        console.log('✅ DEBUG: Processed changes cleared for new changes');
-      } else {
-        console.log('🔄 DEBUG: Same changes received, not clearing processed changes');
-      }
-    }
-  }, [changes?.map(c => c.id).join(',')]);
-
-  const cleanDuplicateContent = (content: string) => {
-    const lines = content.split('\n');
-    const cleanedLines: string[] = [];
-    let hasUniversity = false;
-    let hasArdentCapital = false;
-    let inItemizeBlock = false;
-    let itemizeStartIndex = -1;
-    
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const trimmedLine = line.trim();
-      
-      // Handle university entries - keep only one
-      if (trimmedLine.includes('\\textbf{') && trimmedLine.includes('Expected May 2026')) {
-        if (!hasUniversity) {
-          hasUniversity = true;
-          cleanedLines.push(line);
-        }
-        // Skip duplicate university entries
-        continue;
-      }
-      
-      // Handle malformed Ardent Capital entries - clean them up instead of removing
-      if (trimmedLine.includes('Ardent Capital') || trimmedLine.includes('ardent')) {
-        if (!hasArdentCapital) {
-          hasArdentCapital = true;
-          // Clean up the malformed entry
-          if (trimmedLine.includes('— AI Intern') && trimmedLine.includes('|India')) {
-            // This is a malformed entry, fix it
-            cleanedLines.push('\\textbf{Ardent Capital Private Limited} --- AI Intern |India \\textit{May 2025 – Present}');
-            cleanedLines.push('\\begin{itemize}');
-            cleanedLines.push('\\item Developed an AI-based Banking Transaction Categorization Model processing 1.4M+ transactions; integrated fuzzy matching for rare/unseen categories.');
-            cleanedLines.push('\\item Built a React front-end that allows internal users to upload bank statements, view categorized transactions, analyze summaries, and trigger retraining of the AI model from the website.');
-            cleanedLines.push('\\item Automated internal workflows using Python, enhancing efficiency and accuracy across multiple tasks.');
-            cleanedLines.push('\\item Collaborated with cross-functional teams to integrate AI outputs into dashboards and reporting tools.');
-            cleanedLines.push('\\end{itemize}');
-            cleanedLines.push(''); // Add spacing
-          } else {
-            cleanedLines.push(line);
-          }
-        }
-        // Skip duplicate Ardent entries
-        continue;
-      }
-      
-      // Handle malformed itemize blocks - clean them up
-      if (trimmedLine.includes('\\end{itemize}') && !inItemizeBlock) {
-        // This is an orphaned \end{itemize}, skip it
-        continue;
-      }
-      
-      if (trimmedLine.includes('\\begin{itemize}')) {
-        inItemizeBlock = true;
-        itemizeStartIndex = i;
-        cleanedLines.push(line);
-        continue;
-      }
-      
-      if (trimmedLine.includes('\\end{itemize}') && inItemizeBlock) {
-        inItemizeBlock = false;
-        itemizeStartIndex = -1;
-        cleanedLines.push(line);
-        continue;
-      }
-      
-      // Handle orphaned \item entries (not inside itemize blocks)
-      if (trimmedLine.includes('\\item') && !inItemizeBlock) {
-        // This is an orphaned \item, skip it
-        continue;
-      }
-      
-      // Handle malformed Personal Project entries
-      if (trimmedLine.includes('\\\\textbf{Personal Project}') || 
-          trimmedLine.includes('\\n\\\\textbf{Personal Project}')) {
-        // Skip malformed entries
-        continue;
-      }
-      
-      // Handle malformed LaTeX commands
-      if (trimmedLine.includes('\\\\begin{itemize}') || 
-          trimmedLine.includes('\\\\item') ||
-          trimmedLine.includes('\\\\end{itemize}')) {
-        // Skip malformed LaTeX
-        continue;
-      }
-      
-      // Handle template placeholders
-      if (trimmedLine.includes('New Company Name') || 
-          trimmedLine.includes('Internship Role') ||
-          trimmedLine.includes('Brief description of your responsibilities')) {
-        // Skip template content
-        continue;
-      }
-      
-      cleanedLines.push(line);
-    }
-    
-    let cleanedContent = cleanedLines.join('\n');
-    
-    // Fix document structure
-    if (!cleanedContent.includes('\\begin{document}')) {
-      const parts = cleanedContent.split('\\usepackage{hyperref}');
-      if (parts.length > 1) {
-        cleanedContent = parts[0] + '\\usepackage{hyperref}\n\n\\begin{document}\n\n' + parts[1];
-      }
-    }
-    
-    return cleanedContent;
-  };
-
-  const handleContentChange = async (newContent: string) => {
-    console.log('📝 DEBUG: Content changed');
-    
-    // Clean up duplicate content
-    const cleanedContent = cleanDuplicateContent(newContent);
-    setContent(cleanedContent);
-    
-    // Update sessionStorage
     const projectData = sessionStorage.getItem('currentProject');
     if (projectData) {
       try {
+      const project = JSON.parse(projectData);
+        if (project?.resume_tex) {
+          const cleaned = cleanEditorContent(project.resume_tex);
+          setContent(cleaned);
+          (window as any).latexEditorContent = cleaned;
+          project.resume_tex = cleaned;
+          sessionStorage.setItem('currentProject', JSON.stringify(project));
+        }
+      } catch {}
+    }
+  }, []);
+
+  // keep global mirror
+  useEffect(() => {
+    (window as any).latexEditorContent = content;
+  }, [content]);
+
+  // listen for external updates
+  useEffect(() => {
+    const handler = () => {
+      const projectData = sessionStorage.getItem('currentProject');
+      if (!projectData) return;
+      try {
         const project = JSON.parse(projectData);
-        project.resume_tex = cleanedContent;
-        sessionStorage.setItem('currentProject', JSON.stringify(project));
-        
-        // Create project in backend
-        const response = await fetch('http://localhost:8000/project/recreate', {
+        if (project?.resume_tex) {
+          const cleaned = cleanEditorContent(project.resume_tex);
+          setContent(cleaned);
+          (window as any).latexEditorContent = cleaned;
+          project.resume_tex = cleaned;
+          sessionStorage.setItem('currentProject', JSON.stringify(project));
+        }
+      } catch {}
+    };
+    window.addEventListener('projectUpdated', handler as EventListener);
+    return () => window.removeEventListener('projectUpdated', handler as EventListener);
+  }, []);
+
+  // Reset processed when the actual change *content* changes (not just IDs)
+  useEffect(() => {
+    const fp = makeFingerprint(changes || []);
+    if (fp && fp !== lastFingerprint) {
+      setProcessedIds(new Set());
+      setLastFingerprint(fp);
+    }
+  }, [changes, lastFingerprint]);
+
+  const activeChanges = useMemo(
+    () => (changes || []).filter((c) => !processedIds.has(c.id)),
+    [changes, processedIds]
+  );
+  const normChanges = useMemo(() => normalizeChanges(activeChanges), [activeChanges]);
+
+  // persist once
+  const persistProject = async (newContent: string) => {
+    const projectData = sessionStorage.getItem('currentProject');
+    if (!projectData) return;
+    try {
+      const project = JSON.parse(projectData);
+      project.resume_tex = newContent;
+      sessionStorage.setItem('currentProject', JSON.stringify(project));
+      try {
+        await fetch('http://localhost:8000/project/recreate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(project),
         });
-        
-        if (response.ok) {
-          console.log('✅ DEBUG: Project updated in backend');
-        }
-      } catch (error) {
-        console.log('❌ DEBUG: Error updating project:', error);
-      }
-    }
-    
-    onContentChange?.(cleanedContent);
+      } catch {}
+      window.dispatchEvent(new CustomEvent('projectUpdated', { detail: project }));
+    } catch {}
   };
 
-  const handleApplyChange = (changeId: string, accepted: boolean) => {
-    console.log(`🔧 DEBUG: Applying change ${changeId}: ${accepted ? 'accepted' : 'rejected'}`);
-    
-    const change = changes?.find(c => c.id === changeId);
-    if (!change) {
-      console.log(`❌ DEBUG: Change ${changeId} not found`);
-      return;
-    }
-    
-    // Check if change is already processed
-    if (processedChanges.has(changeId)) {
-      console.log(`⚠️ DEBUG: Change ${changeId} already processed, ignoring`);
-      return;
-    }
-    
-    if (!accepted) {
-      // Just mark as processed and return
-      setProcessedChanges(prev => new Set(prev).add(changeId));
-      window.dispatchEvent(new CustomEvent('changeAccepted', { detail: { changeId, accepted } }));
-      return;
-    }
+  const handleContentChange = async (newContent: string) => {
+    const cleaned = cleanEditorContent(newContent);
+    if (cleaned === content) return;
+    setContent(cleaned);
+    (window as any).latexEditorContent = cleaned;
+    await persistProject(cleaned);
+    onContentChange?.(cleaned);
+  };
 
-    // Apply the change using a more reliable approach
-    const lines = content.split('\n');
-    const lineNumber = change.startLine || change.start_line || 1;
-    const lineIndex = lineNumber - 1;
-    
-    console.log(`🔍 DEBUG: Applying change:`, {
-      id: change.id,
-      type: change.type,
-      line: lineNumber,
-      content: change.content.substring(0, 100) + '...'
+  /* -------------------------- Batch apply (robust) -------------------------- */
+
+  const applyChangesInBatch = async (ids: string[], accept: boolean) => {
+    if (!ids.length) return;
+
+    const byId = new Map(normChanges.map((c) => [c.id, c]));
+    let lines = content.split('\n');
+    const processed = new Set<string>();
+
+    // group by start to combine removal+addition (replacement) pairs
+    const byStart = new Map<number, NormChange[]>();
+    normChanges.forEach((ch) => {
+      if (!byStart.has(ch.start)) byStart.set(ch.start, []);
+      byStart.get(ch.start)!.push(ch);
     });
-    
-    // Check if this is part of a smart replacement (removal + addition on same line)
-    const otherChangesOnSameLine = changes?.filter(c => 
-      c.id !== changeId && 
-      (c.startLine || c.start_line) === lineNumber &&
-      !processedChanges.has(c.id)
-    ) || [];
-    
-    const hasRemoval = otherChangesOnSameLine.some(c => c.type === 'removal');
-    const hasAddition = otherChangesOnSameLine.some(c => c.type === 'addition');
-    const isSmartReplacement = (change.type === 'removal' && hasAddition) || 
-                              (change.type === 'addition' && hasRemoval);
-    
-    console.log(`🔍 DEBUG: Smart replacement check:`, {
-      hasRemoval,
-      hasAddition,
-      isSmartReplacement,
-      otherChangesCount: otherChangesOnSameLine.length
-    });
-    
-    if (isSmartReplacement) {
-      // Handle smart replacement - find the addition change to use as replacement
-      const additionChange = otherChangesOnSameLine.find(c => c.type === 'addition') || 
-                            (change.type === 'addition' ? change : null);
-      
-      if (additionChange && lineIndex >= 0 && lineIndex < lines.length) {
-        console.log(`🔍 DEBUG: Smart replacement on line ${lineNumber}:`);
-        console.log(`  Original: "${lines[lineIndex]}"`);
-        console.log(`  New: "${additionChange.content.replace(/\\n/g, '\n')}"`);
-        
-        // For multi-line replacements, we need to handle the entire block
-        const newContent = additionChange.content.replace(/\\n/g, '\n');
-        const newLines = newContent.split('\n');
-        
-        // If it's a multi-line replacement, replace multiple lines
-        if (newLines.length > 1) {
-          // Find the end of the current entry (look for next \textbf{ or \section*)
-          let endIndex = lineIndex + 1;
-          while (endIndex < lines.length) {
-            const nextLine = lines[endIndex].trim();
-            if (nextLine.startsWith('\\textbf{') || nextLine.startsWith('\\section*{') || nextLine.startsWith('\\end{document}')) {
-              break;
-            }
-            endIndex++;
+
+    // stable ordering
+    const toApply: NormChange[] = ids.map(id => byId.get(id)).filter(Boolean) as NormChange[];
+    toApply.sort((a, b) => a.start - b.start || a.end - b.end);
+
+    for (const ch of toApply) {
+      if (processed.has(ch.id)) continue;
+
+      if (!accept) {
+        processed.add(ch.id);
+        window.dispatchEvent(new CustomEvent('changeAccepted', { detail: { changeId: ch.id, accepted: false } }));
+        continue;
+      }
+
+      const siblings = byStart.get(ch.start) || [];
+      const hasAdd = siblings.some(s => s.type === 'addition' && ids.includes(s.id));
+      const hasRem = siblings.some(s => s.type === 'removal' && ids.includes(s.id));
+      const isReplacement = ch.type === 'replacement' || (hasAdd && hasRem);
+
+      if (isReplacement) {
+        const add = (ch.type === 'addition'
+          ? ch
+          : siblings.find(s => s.type === 'addition' && ids.includes(s.id))) || ch;
+        const rem = (ch.type === 'removal'
+          ? ch
+          : siblings.find(s => s.type === 'removal' && ids.includes(s.id))) || ch;
+
+        // content-first replacement
+        let replaced = false;
+        if (rem.contentLines.length) {
+          const found = findBlockByContent(lines, rem.contentLines);
+          if (found) {
+            lines = replaceBlock(lines, found[0], found[1], add.contentLines);
+            replaced = true;
           }
-          
-          console.log(`🔍 DEBUG: Multi-line replacement from line ${lineIndex + 1} to ${endIndex}`);
-          
-          // Replace the entire block
-          lines.splice(lineIndex, endIndex - lineIndex, ...newLines);
-        } else {
-          // Single line replacement
-          lines[lineIndex] = newContent;
         }
-        
-        // Mark ALL changes on this line as processed (both removal and addition)
-        const allChangesOnLine = changes?.filter(c => 
-          (c.startLine || c.start_line) === lineNumber
-        ) || [];
-        
-        console.log(`🔍 DEBUG: Marking ${allChangesOnLine.length} changes as processed:`, 
-          allChangesOnLine.map(c => c.id));
-        
-        setProcessedChanges(prev => {
-          const newSet = new Set(prev);
-          allChangesOnLine.forEach(c => newSet.add(c.id));
-          return newSet;
-        });
-        
-        // Dispatch events for ALL changes on this line
-        allChangesOnLine.forEach(c => {
-          window.dispatchEvent(new CustomEvent('changeAccepted', { 
-            detail: { changeId: c.id, accepted: true } 
-          }));
-        });
-        
-        console.log(`✅ DEBUG: Smart replacement completed on line ${lineNumber}`);
+        if (!replaced) {
+          lines = replaceBlock(lines, rem.start, rem.end, add.contentLines);
+        }
+
+        siblings
+          .filter(s => ids.includes(s.id) && (s.type === 'removal' || s.type === 'addition' || s.type === 'replacement'))
+          .forEach(s => {
+            processed.add(s.id);
+            window.dispatchEvent(new CustomEvent('changeAccepted', { detail: { changeId: s.id, accepted: true } }));
+          });
+        continue;
       }
-    } else {
-      // Handle individual change
-      if (change.type === 'removal') {
-        if (lineIndex >= 0 && lineIndex < lines.length) {
-          console.log(`🔍 DEBUG: Removing line ${lineNumber}: "${lines[lineIndex]}"`);
-          lines.splice(lineIndex, 1);
-          console.log(`✅ DEBUG: Removed line ${lineNumber}`);
+
+      if (ch.type === 'removal') {
+        let removed = false;
+        if (ch.contentLines.length) {
+          const found = findBlockByContent(lines, ch.contentLines);
+          if (found) {
+            lines = replaceBlock(lines, found[0], found[1], []);
+            removed = true;
+          }
         }
-      } else if (change.type === 'addition') {
-        if (lineIndex >= 0 && lineIndex <= lines.length) {
-          console.log(`🔍 DEBUG: Adding line at ${lineNumber}: "${change.content.replace(/\\n/g, '\n')}"`);
-          lines.splice(lineIndex, 0, change.content.replace(/\\n/g, '\n'));
-          console.log(`✅ DEBUG: Added line at ${lineNumber}`);
+        if (!removed) {
+          lines = replaceBlock(lines, ch.start, ch.end, []);
         }
-      } else if (change.type === 'replacement') {
-        if (lineIndex >= 0 && lineIndex < lines.length) {
-          console.log(`🔍 DEBUG: Replacing line ${lineNumber}: "${lines[lineIndex]}" -> "${change.content.replace(/\\n/g, '\n')}"`);
-          lines[lineIndex] = change.content.replace(/\\n/g, '\n');
-          console.log(`✅ DEBUG: Replaced line ${lineNumber}`);
-        }
+        processed.add(ch.id);
+        window.dispatchEvent(new CustomEvent('changeAccepted', { detail: { changeId: ch.id, accepted: true } }));
+        continue;
       }
-      
-      // Mark this change as processed
-      setProcessedChanges(prev => new Set(prev).add(changeId));
-      
-      // Dispatch event for this change
-      window.dispatchEvent(new CustomEvent('changeAccepted', { detail: { changeId, accepted } }));
+
+      if (ch.type === 'addition') {
+        // Skip if block already exists verbatim
+        const already = ch.contentLines.length ? !!findBlockByContent(lines, ch.contentLines) : false;
+        if (!already) {
+          // IMPORTANT: Insert AFTER anchor to match the preview
+          lines = insertAfter(lines, ch.start, ch.contentLines);
+        }
+        processed.add(ch.id);
+        window.dispatchEvent(new CustomEvent('changeAccepted', { detail: { changeId: ch.id, accepted: true } }));
+        continue;
+      }
     }
-    
-    // Update content
+
     const newContent = lines.join('\n');
+    if (newContent !== content) {
     setContent(newContent);
-    handleContentChange(newContent);
+      (window as any).latexEditorContent = newContent;
+      await persistProject(newContent);
+      onContentChange?.(newContent);
+    }
+    setProcessedIds(prev => {
+      const s = new Set(prev);
+      processed.forEach(id => s.add(id));
+      return s;
+    });
   };
 
-  // Get active changes (not processed yet)
-  const activeChanges = (changes || []).filter(change => {
-    const isProcessed = processedChanges.has(change.id);
-    console.log(`🔍 DEBUG: Change ${change.id} processed: ${isProcessed}`);
-    return !isProcessed;
-  });
+  const handleApplyChange = (id: string, accepted: boolean) =>
+    applyChangesInBatch([id], accepted);
 
-  // Auto-apply changes when autoApply is enabled
+  // auto-apply all (one batch)
   useEffect(() => {
-    if (autoApply && activeChanges.length > 0) {
-      console.log(`🚀 DEBUG: Auto-applying ${activeChanges.length} changes`);
-      activeChanges.forEach(change => {
-        handleApplyChange(change.id, true);
-      });
-    }
-  }, [autoApply, activeChanges]);
+    if (!autoApply || activeChanges.length === 0) return;
+    applyChangesInBatch(activeChanges.map((c) => c.id), true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoApply, activeChanges.length]);
 
-  // Group changes by line number
-  const changesByLine = new Map<number, Change[]>();
-  activeChanges.forEach(change => {
-    const lineNumber = change.startLine || change.start_line || 1;
-    if (!changesByLine.has(lineNumber)) {
-      changesByLine.set(lineNumber, []);
-    }
-    changesByLine.get(lineNumber)!.push(change);
-  });
-  
-  console.log(`🔍 DEBUG: Changes by line:`, Array.from(changesByLine.entries()).map(([line, changes]) => ({
-    line,
-    changes: changes.map(c => ({ id: c.id, type: c.type, content: c.content.substring(0, 50) + '...' }))
-  })));
+  // UI grouping for single-permission replacements
+  const groups = useMemo(() => {
+    const m = new Map<number, Change[]>();
+    activeChanges.forEach((c) => {
+      const ln = c.startLine ?? c.start_line ?? 1;
+      if (!m.has(ln)) m.set(ln, []);
+      m.get(ln)!.push(c);
+    });
+    return m;
+  }, [activeChanges]);
 
-  console.log(`🔍 DEBUG: Active changes: ${activeChanges.length}, Total: ${changes?.length || 0}, Processed: ${processedChanges.size}`);
-  console.log(`🔍 DEBUG: Processed change IDs:`, Array.from(processedChanges));
-  console.log(`🔍 DEBUG: All change IDs:`, changes?.map(c => c.id) || []);
-
-      return (
+                return (
     <div className="flex h-full bg-slate-900">
-      {/* Left Panel - LaTeX Content */}
+      {/* Left: Editor / Diff */}
       <div className="flex-1 flex flex-col">
-        {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-slate-700">
           <h2 className="text-lg font-semibold text-slate-200">LaTeX Editor</h2>
-          <div className="text-sm text-slate-400">
-            {activeChanges.length} changes pending
-          </div>
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 overflow-auto p-4">
-          <div className="max-w-none">
-            <textarea
-              value={content}
-              onChange={(e) => handleContentChange(e.target.value)}
-              className="w-full h-full bg-slate-800 text-slate-300 font-mono text-sm p-4 border border-slate-600 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="LaTeX content will appear here..."
-              style={{ minHeight: '500px' }}
-            />
-              </div>
-              </div>
+          <div className="flex items-center gap-4">
+            <div className="text-sm text-slate-400">
+              {activeChanges.length} change{activeChanges.length === 1 ? '' : 's'} pending
             </div>
-
-      {/* Right Panel - Changes */}
-      <div className="w-80 border-l border-slate-700 flex flex-col">
-        {/* Changes Header */}
-        <div className="p-4 border-b border-slate-700">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-lg font-semibold text-slate-200">Changes</h3>
-            <div className="flex items-center space-x-2">
-              <label className="flex items-center space-x-2 text-sm text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={autoApply}
-                  onChange={(e) => setAutoApply(e.target.checked)}
-                  className="w-4 h-4 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500"
-                />
-                <span>Auto-apply</span>
-              </label>
-              {!autoApply && activeChanges.length > 0 && (
-                <button
-                  onClick={() => {
-                    console.log(`🚀 DEBUG: Manually applying all ${activeChanges.length} changes`);
-                    activeChanges.forEach(change => {
-                      handleApplyChange(change.id, true);
-                    });
-                  }}
-                  className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-                >
-                  Apply All
-                </button>
-              )}
+            <label className="flex items-center gap-2 text-sm text-slate-300">
+              <input
+                type="checkbox"
+                checked={autoApply}
+                onChange={(e) => setAutoApply(e.target.checked)}
+                className="w-4 h-4 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500"
+              />
+              Auto-apply
+            </label>
+            {!autoApply && activeChanges.length > 0 && (
+              <button
+                onClick={() => applyChangesInBatch(activeChanges.map((c) => c.id), true)}
+                className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+              >
+                Apply All
+              </button>
+            )}
+            <div className="inline-flex rounded-md overflow-hidden border border-slate-600">
+              <button
+                className={`px-3 py-1 text-sm ${tab === 'edit' ? 'bg-slate-700 text-slate-100' : 'bg-slate-800 text-slate-300'}`}
+                onClick={() => setTab('edit')}
+              >
+                Edit
+              </button>
+              <button
+                className={`px-3 py-1 text-sm ${tab === 'diff' ? 'bg-slate-700 text-slate-100' : 'bg-slate-800 text-slate-300'}`}
+                onClick={() => setTab('diff')}
+              >
+                Diff
+              </button>
             </div>
           </div>
-          <div className="text-sm text-slate-400">
-            {activeChanges.length} pending
-          </div>
-        </div>
-
-        {/* Changes List */}
-        <div className="flex-1 overflow-auto p-4">
-          {/* Debug info */}
-          <div className="mb-4 p-2 bg-slate-800 rounded text-xs text-slate-400">
-            <div>Total changes: {changes?.length || 0}</div>
-            <div>Active changes: {activeChanges.length}</div>
-            <div>Processed: {processedChanges.size}</div>
-          </div>
-          
-          {activeChanges.length > 0 ? (
-            <div className="space-y-4">
-              {console.log(`🔍 DEBUG: Rendering ${Array.from(changesByLine.entries()).length} line groups`)}
-              {console.log(`🔍 DEBUG: Active changes details:`, activeChanges.map(c => ({ id: c.id, type: c.type, line: c.startLine || c.start_line, content: c.content.substring(0, 50) + '...' })))}
-              
-              {/* Debug: Show all active changes without grouping */}
-              <div className="mb-4 p-2 bg-yellow-900/20 border border-yellow-500 rounded text-xs">
-                <div className="text-yellow-300 font-semibold mb-2">DEBUG: All Active Changes</div>
-                {activeChanges.map(change => (
-                  <div key={change.id} className="text-yellow-200 mb-1">
-                    {change.id}: {change.type} on line {change.startLine || change.start_line} - {change.content.substring(0, 50)}...
-                  </div>
-                ))}
-              </div>
-              
-              {Array.from(changesByLine.entries()).map(([lineNumber, lineChanges]) => (
-                <div key={lineNumber} className="border border-slate-600 rounded-lg p-4">
-                  <div className="text-sm font-semibold text-slate-300 mb-2">
-                    Line {lineNumber}
-                  </div>
-                  
-                  {/* Check if this is a smart replacement */}
-                  {lineChanges.some(c => c.type === 'removal') && 
-                   lineChanges.some(c => c.type === 'addition') && 
-                   !lineChanges.some(c => processedChanges.has(c.id)) ? (
-                    <div className="space-y-2">
-                      <div className="bg-red-900/20 border border-red-500 rounded p-2">
-                        <div className="text-red-300 text-sm font-mono line-through">
-                          {lineChanges.find(c => c.type === 'removal')?.content.replace(/\\n/g, '\n')}
-                    </div>
-                        <div className="text-green-300 text-sm font-mono mt-1 whitespace-pre-wrap">
-                          {lineChanges.find(c => c.type === 'addition')?.content.replace(/\\n/g, '\n')}
-                        </div>
-                      </div>
-                      <div className="flex space-x-2">
-                    <Button
-                      size="sm"
-                          variant="outline"
-                          className="text-green-600 border-green-600 hover:bg-green-600 hover:text-white"
-                          onClick={() => handleApplyChange(lineChanges.find(c => c.type === 'removal')!.id, true)}
-                        >
-                          <Check className="w-4 h-4 mr-1" />
-                          Accept
-                    </Button>
-                    <Button
-                      size="sm"
-                          variant="outline"
-                          className="text-red-600 border-red-600 hover:bg-red-600 hover:text-white"
-                          onClick={() => handleApplyChange(lineChanges.find(c => c.type === 'removal')!.id, false)}
-                        >
-                          <X className="w-4 h-4 mr-1" />
-                          Reject
-                    </Button>
-                  </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {lineChanges.filter(change => !processedChanges.has(change.id)).map((change) => (
-                        <div key={change.id} className={`p-2 rounded border ${
-                          change.type === 'addition' ? 'bg-green-900/20 border-green-500' :
-                          change.type === 'removal' ? 'bg-red-900/20 border-red-500' :
-                          'bg-blue-900/20 border-blue-500'
-                        }`}>
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-2">
-                              <span className={`px-2 py-1 text-xs font-semibold rounded ${
-                                change.type === 'addition' ? 'bg-green-900 text-green-200' :
-                                change.type === 'removal' ? 'bg-red-900 text-red-200' :
-                                'bg-blue-900 text-blue-200'
-                              }`}>
-                                {change.type.toUpperCase()}
-                              </span>
-                              <span className="text-slate-300 font-mono text-sm whitespace-pre-wrap">{change.content.replace(/\\n/g, '\n')}</span>
-                  </div>
-                            <div className="flex space-x-2">
-                      <Button
-                        size="sm"
-                                variant="outline"
-                                className="text-green-600 border-green-600 hover:bg-green-600 hover:text-white"
-                        onClick={() => handleApplyChange(change.id, true)}
-                      >
-                                <Check className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        size="sm"
-                                variant="outline"
-                                className="text-red-600 border-red-600 hover:bg-red-600 hover:text-white"
-                        onClick={() => handleApplyChange(change.id, false)}
-                      >
-                                <X className="w-4 h-4" />
-                      </Button>
-                    </div>
-                          </div>
-                      </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-              
-              {/* Fallback: Show individual changes if line grouping fails */}
-              {Array.from(changesByLine.entries()).length === 0 && activeChanges.length > 0 && (
-                <div className="space-y-2">
-                  <div className="text-sm font-semibold text-slate-300 mb-2">Individual Changes (Fallback)</div>
-                  {activeChanges.map(change => (
-                    <div key={change.id} className={`p-2 rounded border ${
-                      change.type === 'addition' ? 'bg-green-900/20 border-green-500' :
-                      change.type === 'removal' ? 'bg-red-900/20 border-red-500' :
-                      'bg-blue-900/20 border-blue-500'
-                    }`}>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
-                          <span className={`px-2 py-1 text-xs font-semibold rounded ${
-                            change.type === 'addition' ? 'bg-green-900 text-green-200' :
-                            change.type === 'removal' ? 'bg-red-900 text-red-200' :
-                            'bg-blue-900 text-blue-200'
-                          }`}>
-                            {change.type.toUpperCase()}
-                          </span>
-                          <span className="text-slate-300 font-mono text-sm whitespace-pre-wrap">{change.content.replace(/\\n/g, '\n')}</span>
-                        </div>
-                        <div className="flex space-x-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-green-600 border-green-600 hover:bg-green-600 hover:text-white"
-                            onClick={() => handleApplyChange(change.id, true)}
-                          >
-                            <Check className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-red-600 border-red-600 hover:bg-red-600 hover:text-white"
-                            onClick={() => handleApplyChange(change.id, false)}
-                          >
-                            <X className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="text-center text-slate-400 py-8">
-              <div className="text-lg font-semibold mb-2">No Active Changes</div>
-              <div className="text-sm">All changes have been processed</div>
-            </div>
-          )}
-        </div>
       </div>
+      
+        <div className="flex-1 overflow-auto p-4">
+          {tab === 'edit' ? (
+              <textarea
+                value={content}
+                onChange={(e) => handleContentChange(e.target.value)}
+              className="w-full h-full bg-slate-800 text-slate-300 font-mono text-sm p-4 border border-slate-600 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="LaTeX content will appear here..."
+              style={{ minHeight: '500px' }}
+              />
+          ) : (
+            <DiffPreview content={content} normChanges={normalizeChanges(activeChanges)} />
+          )}
+            </div>
+      </div>
+
+      {/* Inline-only presentation: sidebar removed */}
     </div>
   );
 }

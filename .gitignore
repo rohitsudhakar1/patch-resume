@@ -22,3 +22,22 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+ 
+# Python cache
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# LaTeX build artifacts
+temp_latex/
+backend/temp_latex/
+*.synctex.gz
+*.aux
+*.log
+*.out
+*.pdf
+*.toc
+*.fls
+*.fdb_latexmk
+*.gz
+*.bat

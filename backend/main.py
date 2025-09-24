@@ -16,6 +16,11 @@ from datetime import datetime
 import openai
 from dotenv import load_dotenv
 
+# Import services
+from services.template_service import TemplateService
+from services.compile_service import CompileService
+from services.simple_parse_service import SimpleParseService
+
 # Load environment variables from .env file
 try:
     load_dotenv()
@@ -29,6 +34,11 @@ print("✅ DEBUG: OpenAI API key set successfully")
 # Simple in-memory storage for demo
 projects = {}
 patches = {}
+
+# Initialize services
+template_service = TemplateService()
+compile_service = CompileService()
+parse_service = ParseService()
 
 # Load projects from file if it exists
 PROJECTS_FILE = "projects_backup.json"
@@ -90,6 +100,7 @@ class ChangeRequest(BaseModel):
 
 class ApplyChangesRequest(BaseModel):
     changes: List[ChangeRequest]
+    project_id: str
 
 class PatchRequest(BaseModel):
     instruction: str
@@ -153,71 +164,26 @@ def extract_text_from_file(file_path: str, content_type: str) -> str:
         return f"Error reading file: {str(e)}"
 
 def convert_to_latex_with_chat(text_content: str) -> str:
-    """Convert extracted text to LaTeX using OpenAI"""
-    
-    # Clean the text content first
-    text_content = clean_text_content(text_content)
+    """Convert extracted text to LaTeX using improved parsing for better formatting preservation"""
     
     print(f"🔍 DEBUG: Converting text content (length: {len(text_content)})")
     print(f"📝 DEBUG: First 200 chars: {text_content[:200]}...")
-    print(f"🔍 DEBUG: OpenAI API key status: {'Found' if openai.api_key else 'Missing'}")
     
-    if not openai.api_key:
-        print("⚠️ WARNING: No OpenAI API key found, using fallback template")
-        return convert_to_latex_fallback(text_content)
+    # Use improved parsing approach that preserves formatting better
+    print("🔧 DEBUG: Using improved parsing approach for better formatting preservation")
     
-    try:
-        print("🤖 DEBUG: Calling OpenAI API...")
-        
-        system_prompt = """You are a LaTeX resume expert. Convert the provided resume text into a well-formatted LaTeX document.
-
-Requirements:
-1. Use proper LaTeX syntax with \\documentclass{article}
-2. Include packages: \\usepackage[letterpaper,margin=0.75in]{geometry}, \\usepackage{enumitem}, \\usepackage{hyperref}
-3. Structure with sections: Professional Summary, Experience, Education, Projects, Skills
-4. Use \\textbf{} for job titles, company names, and project names
-5. Use \\textit{} for dates and locations
-6. Use \\item for bullet points in \\begin{itemize}
-7. Escape special LaTeX characters properly (& becomes \\&, % becomes \\%, etc.)
-8. NEVER use backslashes followed by words that are not LaTeX commands (like \\Personal, \\Jan, etc.)
-9. NEVER use \\n\\ or similar problematic sequences
-10. Use proper line breaks with \\\\ for line breaks within sections
-11. Make it professional and well-formatted
-
-IMPORTANT: Avoid any sequences like \\Personal, \\Jan, \\n\\, or any backslash followed by a word that is not a LaTeX command. These cause compilation errors.
-
-Return ONLY the LaTeX code, no explanations."""
-
-        user_prompt = f"""Convert this resume text to LaTeX:
-
-{text_content}"""
-
-        print(f"📤 DEBUG: Sending to OpenAI - System prompt length: {len(system_prompt)}, User prompt length: {len(user_prompt)}")
-        print(f"🔍 DEBUG: System prompt: {system_prompt[:200]}...")
-        print(f"🔍 DEBUG: User prompt: {user_prompt[:200]}...")
-        
-        client = openai.OpenAI(api_key=openai.api_key)
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            max_tokens=3000,
-            temperature=0.1
-        )
-        
-        latex_content = response.choices[0].message.content
-        print(f"📥 DEBUG: Received from OpenAI - Length: {len(latex_content)}")
-        print(f"📄 DEBUG: First 300 chars of response: {latex_content[:300]}...")
-        print(f"✅ DEBUG: OpenAI API call successful!")
-        
-        return latex_content
-        
-    except Exception as e:
-        print(f"❌ ERROR: OpenAI API failed: {str(e)}")
-        print("🔄 DEBUG: Falling back to template method")
-        return convert_to_latex_fallback(text_content)
+    # Use SimpleParseService for better structure preservation
+    parse_service = SimpleParseService()
+    resume_data = parse_service.parse_resume_text(text_content)
+    
+    # Generate LaTeX using TemplateService
+    template_service = TemplateService()
+    latex = template_service.render_resume(resume_data)
+    
+    print(f"📄 DEBUG: Generated LaTeX using improved parsing (length: {len(latex)})")
+    print(f"📄 DEBUG: LaTeX preview: {latex[:200]}...")
+    
+    return latex
 
 def validate_and_improve_changes(changes_data: list, resume_tex: str) -> list:
     """Validate and improve changes to ensure multi-line deletions work correctly"""
@@ -275,9 +241,11 @@ def clean_text_content(text_content: str) -> str:
     text_content = re.sub(r'\\Jan\s*', 'Jan ', text_content)
     text_content = re.sub(r'\\&', '&', text_content)
     
+    # Only clean raw text content, not LaTeX commands
+    # This function should only be used for raw text input, not LaTeX output
     # Remove backslashes that are not part of legitimate LaTeX commands
     # Keep common LaTeX commands but remove problematic ones
-    legitimate_latex_commands = ['textbf', 'textit', 'section', 'subsection', 'itemize', 'item', 'begin', 'end', 'documentclass', 'usepackage', 'href', 'url']
+    legitimate_latex_commands = ['textbf', 'textit', 'section', 'subsection', 'itemize', 'item', 'begin', 'end', 'documentclass', 'usepackage', 'href', 'url', 'newcommand', 'noindent', 'par', 'vspace', 'rule', 'linewidth', 'entryspace', 'sectionline', 'baselinestretch', 'footnotesize', 'normalsize', 'bfseries', 'textbullet', 'leftmargin', 'nosep', 'topsep', 'itemsep', 'parsep', 'partopsep', 'titlespacing', 'titleformat']
     
     # Remove backslashes that are not followed by legitimate LaTeX commands
     text_content = re.sub(r'\\(?!' + '|'.join(legitimate_latex_commands) + r')\w+', '', text_content)
@@ -345,82 +313,17 @@ def _parse_experience_line_improved(line: str, experience: list, current_item: d
     return current_item
 
 def convert_to_latex_fallback(text_content: str) -> str:
-    """Fallback conversion using template approach"""
-    print("🔧 DEBUG: Using fallback template conversion")
+    """Fallback conversion using improved parsing to preserve formatting"""
+    print("🔧 DEBUG: Using improved fallback template conversion")
     
-    # Clean the text content first
-    text_content = clean_text_content(text_content)
+    # Use SimpleParseService for better parsing
+    parse_service = SimpleParseService()
+    resume_data = parse_service.parse_resume_text(text_content)
     
-    # Simple heuristic-based conversion
-    lines = text_content.split('\n')
-    
-    # Initialize structure
-    resume_data = {
-        "name": "",
-        "email": "",
-        "phone": "",
-        "linkedin": "",
-        "github": "",
-        "summary": "",
-        "experience": [],
-        "education": [],
-        "projects": [],
-        "skills": []
-    }
-    
-    current_section = None
-    current_item = {}
-    
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-            
-        # Detect sections
-        line_lower = line.lower()
-        if any(keyword in line_lower for keyword in ["contact", "personal", "name", "@", "phone"]):
-            current_section = "basics"
-        elif any(keyword in line_lower for keyword in ["summary", "objective", "profile", "about"]):
-            current_section = "summary"
-        elif any(keyword in line_lower for keyword in ["experience", "employment", "work", "career"]):
-            current_section = "experience"
-        elif any(keyword in line_lower for keyword in ["education", "academic", "degree", "university"]):
-            current_section = "education"
-        elif any(keyword in line_lower for keyword in ["skills", "technologies", "competencies"]):
-            current_section = "skills"
-        else:
-            # Process based on current section
-            if current_section == "basics":
-                if "@" in line and not resume_data["email"]:
-                    resume_data["email"] = line
-                elif any(char.isdigit() for char in line) and "phone" in line_lower:
-                    resume_data["phone"] = line
-                elif "linkedin" in line_lower:
-                    resume_data["linkedin"] = line
-                elif "github" in line_lower:
-                    resume_data["github"] = line
-                elif not resume_data["name"] and len(line.split()) <= 3:
-                    resume_data["name"] = line
-            elif current_section == "summary":
-                resume_data["summary"] += line + " "
-            elif current_section == "experience":
-                current_item = _parse_experience_line_improved(line, resume_data["experience"], current_item)
-            elif current_section == "education":
-                if line and not line.startswith("•") and not line.startswith("-"):
-                    resume_data["education"].append({"degree": line, "school": "", "year": ""})
-            elif current_section == "projects":
-                if line and not line.startswith("•") and not line.startswith("-"):
-                    resume_data["projects"].append({"name": line, "description": ""})
-            elif current_section == "skills":
-                resume_data["skills"].extend([s.strip() for s in line.split(',')])
-    
-    # Add final experience item
-    if current_item:
-        resume_data["experience"].append(current_item)
-    
-    # Generate LaTeX
-    latex = generate_latex_template(resume_data)
-    print(f"📄 DEBUG: Generated LaTeX (length: {len(latex)})")
+    # Generate LaTeX using TemplateService
+    template_service = TemplateService()
+    latex = template_service.render_resume(resume_data)
+    print(f"📄 DEBUG: Generated LaTeX using ParseService + TemplateService (length: {len(latex)})")
     return latex
 
 def convert_latex_to_html(latex_content: str) -> str:
@@ -549,146 +452,6 @@ def convert_latex_to_html(latex_content: str) -> str:
     
     return full_html
 
-def generate_latex_template(data: dict) -> str:
-    """Generate LaTeX from structured data"""
-    
-    # Escape LaTeX special characters
-    def escape_latex(text: str) -> str:
-        if not text:
-            return ""
-        replacements = {
-            '\\': r'\\',
-            '{': r'\{',
-            '}': r'\}',
-            '$': r'\$',
-            '&': r'\&',
-            '%': r'\%',
-            '#': r'\#',
-            '^': r'\textasciicircum{}',
-            '_': r'\_',
-            '~': r'\textasciitilde{}'
-        }
-        for char, replacement in replacements.items():
-            text = text.replace(char, replacement)
-        return text
-    
-    # Build contact info
-    contact_parts = []
-    if data["email"]:
-        contact_parts.append(f"Email: {data['email']}")
-    if data["phone"]:
-        contact_parts.append(f"Phone: {data['phone']}")
-    if data["linkedin"]:
-        contact_parts.append(f"LinkedIn: {data['linkedin']}")
-    if data["github"]:
-        contact_parts.append(f"GitHub: {data['github']}")
-    
-    contact_info = " $\\bullet$ ".join(contact_parts) + r"\\" if contact_parts else ""
-    
-    latex = f"""\\documentclass{{article}}
-\\usepackage[letterpaper,margin=0.75in]{{geometry}}
-\\usepackage{{enumitem}}
-\\usepackage{{hyperref}}
-\\usepackage{{url}}
-
-\\begin{{document}}
-
-\\begin{{center}}
-{{\\Large \\textbf{{{escape_latex(data['name'] or 'Your Name')}}}}}\\\\
-{contact_info}
-\\end{{center}}
-
-\\section*{{Professional Summary}}
-{escape_latex(data['summary'] or 'Experienced professional with strong background in relevant field.')}
-
-\\section*{{Experience}}
-"""
-    
-    for exp in data["experience"]:
-        role = exp.get('role', '')
-        company = exp.get('company', '')
-        dates = exp.get('dates', '')
-        location = exp.get('location', '')
-        bullets = exp.get('bullets', [])
-        
-        if not role:
-            continue
-            
-        latex += f"\\textbf{{{escape_latex(role)}}}"
-        
-        if dates:
-            latex += f" \\hfill \\textit{{{escape_latex(dates)}}}"
-        
-        latex += "\\\\\n"
-        
-        if company:
-            latex += f"\\textit{{{escape_latex(company)}}}"
-            if location:
-                latex += f" \\hfill \\textit{{{escape_latex(location)}}}"
-            latex += "\\\\\n"
-        
-        if bullets:
-            latex += "\\begin{itemize}[leftmargin=0.5in]\n"
-            for bullet in bullets:
-                if bullet.strip():
-                    latex += f"\\item {escape_latex(bullet)}\n"
-            latex += "\\end{itemize}\n"
-    
-    if data["education"]:
-        latex += """
-\\section*{Education}
-"""
-        for edu in data["education"]:
-            degree = edu.get('degree', '')
-            school = edu.get('school', '')
-            year = edu.get('year', '')
-            gpa = edu.get('gpa', '')
-            
-            if not degree:
-                continue
-                
-            latex += f"\\textbf{{{escape_latex(degree)}}}"
-            
-            if year:
-                latex += f" \\hfill \\textit{{{escape_latex(year)}}}"
-            
-            latex += "\\\\\n"
-            
-            if school:
-                latex += f"\\textit{{{escape_latex(school)}}}"
-                if gpa:
-                    latex += f" \\hfill {escape_latex(gpa)}"
-                latex += "\\\\\n"
-    
-    if data["projects"]:
-        latex += """
-\\section*{Projects}
-"""
-        for project in data["projects"]:
-            name = project.get('name', '')
-            description = project.get('description', '')
-            
-            if not name:
-                continue
-                
-            latex += f"\\textbf{{{escape_latex(name)}}}"
-            if description:
-                latex += f" \\hfill {escape_latex(description)}"
-            latex += "\\\\\n"
-    
-    if data["skills"]:
-        skills_text = ", ".join([s for s in data["skills"] if s])
-        if skills_text:
-            latex += f"""
-\\section*{{Skills}}
-{escape_latex(skills_text)}
-"""
-    
-    latex += """
-\\end{document}
-"""
-    
-    return latex
 
 @app.post("/ingest", response_model=IngestResponse)
 async def ingest_resume(
@@ -775,9 +538,15 @@ def generate_patch(request: PatchRequest):
         
         patch_id = str(uuid.uuid4())
         
-        # Get current project from request or use first available
-        project_id = request.project_id if hasattr(request, 'project_id') and request.project_id else (list(projects.keys())[0] if projects else str(uuid.uuid4()))
-        project = projects.get(project_id, {})
+        # Get current project from request - require project_id
+        if not hasattr(request, 'project_id') or not request.project_id:
+            raise HTTPException(status_code=400, detail="Project ID is required")
+        
+        project_id = request.project_id
+        if project_id not in projects:
+            raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
+        
+        project = projects[project_id]
         
         print(f"📁 DEBUG: Using project ID: {project_id}")
         print(f"📁 DEBUG: Available projects: {list(projects.keys())}")
@@ -1098,7 +867,10 @@ async def apply_changes(
 ):
     """Apply accepted changes"""
     try:
-        project_id = list(projects.keys())[0] if projects else str(uuid.uuid4())
+        # Use project_id from request
+        project_id = request.project_id
+        if project_id not in projects:
+            raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
         
         # In a real implementation, you would apply the changes to the LaTeX
         # For now, just return success
@@ -1154,307 +926,53 @@ async def get_projects_status():
 
 @app.get("/artifact/pdf/{project_id}")
 async def get_pdf(project_id: str, t: Optional[str] = None):
-    """Get latest PDF for project"""
+    """Get latest PDF for project using modular compile service"""
     print(f"🔍 DEBUG: PDF request for project: {project_id}")
-    print(f"📁 DEBUG: Available projects: {list(projects.keys())}")
-    print(f"📁 DEBUG: Project details: {projects}")
     
     try:
         if project_id not in projects:
             print(f"❌ ERROR: Project {project_id} not found")
-            print(f"📁 DEBUG: Available projects: {list(projects.keys())}")
-            print(f"📁 DEBUG: Looking for exact match...")
-            
-            # Try to find project with similar ID
-            for pid in projects.keys():
-                if project_id in pid or pid in project_id:
-                    print(f"🔍 DEBUG: Found similar project ID: {pid}")
-            
-            # Project not found - return 404 error
-            print(f"❌ ERROR: Project {project_id} not found in backend")
             raise HTTPException(status_code=404, detail=f"Project {project_id} not found. Please upload a resume first.")
         
         project = projects[project_id]
-        print(f"✅ DEBUG: Found project, generating PDF")
-        print(f"📄 DEBUG: Project LaTeX length: {len(project.get('resume_tex', ''))}")
+        latex_content = project["resume_tex"]
         
-        # Create a temporary LaTeX file in a simple path to avoid Windows short path issues
-        import tempfile
-        import subprocess
-        import os
-        import re
+        if not latex_content:
+            raise HTTPException(status_code=400, detail="No LaTeX content found for project")
         
-        # Create temp file in current directory to avoid Windows short path issues
-        temp_dir = os.path.join(os.getcwd(), 'temp_latex')
-        os.makedirs(temp_dir, exist_ok=True)
+        print(f"✅ DEBUG: Found project, compiling LaTeX to PDF")
+        print(f"📄 DEBUG: LaTeX content length: {len(latex_content)}")
         
-        # Start from original LaTeX and preserve a professional preamble
-        minimal_latex = project["resume_tex"]
-
-        # Helper: professional preamble (aligned with Overleaf-style resumes)
-        PROFESSIONAL_PREAMBLE = (
-            "\\documentclass[a4paper]{article}\n\n"
-            "% ---------- Margins ----------\n"
-            "\\usepackage[left=0.7in, right=0.7in, top=0.5in, bottom=0.5in]{geometry}\n\n"
-            "% ---------- Links ----------\n"
-            "\\usepackage[hidelinks]{hyperref}\n\n"
-            "% ---------- Lists / Titles ----------\n"
-            "\\usepackage{enumitem}\n\\usepackage{titlesec}\n\n"
-            "% ---------- Global tight spacing ----------\n"
-            "\\setlength{\\parindent}{0pt}\n\\setlength{\\parskip}{0pt}\n\\renewcommand{\\baselinestretch}{0.84}\n\\footnotesize\n\n"
-            "% Compact section spacing\n"
-            "\\titlespacing*{\\section}{0pt}{0.3ex}{0.5ex}\n\\titleformat{\\section}{\\normalsize\\bfseries}{}{}{}[]\n\n"
-            "% Compact bullets (global)\n"
-            "\\setlist[itemize]{leftmargin=*, label=\\textbullet, nosep, topsep=0.2ex, itemsep=0.2ex, parsep=0pt, partopsep=0pt}\n\n"
-            "% Thin separator line used under section titles\n"
-            "\\newcommand{\\sectionline}{%\n  \\par\\vspace{0.2ex}%\n  \\noindent\\rule{\\linewidth}{0.25pt}%\n  \\par\\vspace{0.2ex}%\n}\n\n"
-            "% Small vertical spacer between entries\n"
-            "\\newcommand{\\entryspace}{\\vspace{0.35em}}\n\n"
-        )
-
-        # Clean the LaTeX content to remove problematic sequences but don't nuke commands
-        minimal_latex = clean_text_content(minimal_latex)
-
-        import re as _re_pdf
-
-        # Strip any garbage before \documentclass to avoid "nonsense at the top"
-        def strip_before_documentclass(tex: str) -> str:
-            idx = tex.find('\\documentclass')
-            return tex if idx == -1 else tex[idx:]
-
-        # If there is already a preamble, keep only safe packages and keep layout intact
-        allowed_packages = {"geometry", "hyperref", "enumitem", "titlesec"}
-
-        def filter_packages(tex: str) -> str:
-            lines = tex.split('\n')
-            filtered = []
-            for ln in lines:
-                if ln.strip().startswith('\\usepackage'):
-                    m = _re_pdf.search(r'\\usepackage(?:\[[^\]]*\])?\{([^}]+)\}', ln)
-                    if m:
-                        pkgs = [p.strip() for p in m.group(1).split(',')]
-                        keep_pkgs = [p for p in pkgs if p in allowed_packages]
-                        if keep_pkgs:
-                            filtered.append(f"\\usepackage{{{','.join(keep_pkgs)}}}")
-                        # skip non-allowed packages
-                        continue
-                filtered.append(ln)
-            return '\n'.join(filtered)
-
-        # Build final LaTeX with robust preamble
-        tex = minimal_latex.strip()
-        if '\\documentclass' in tex:
-            tex = strip_before_documentclass(tex)
-            tex = filter_packages(tex)
-        else:
-            # Inject professional preamble
-            tex = PROFESSIONAL_PREAMBLE + ("\\begin{document}\n\n" if '\\begin{document}' not in tex else "") + tex
-            if '\\end{document}' not in tex:
-                tex += "\n\\end{document}\n"
-
-        # Ensure begin/end document exists
-        if '\\begin{document}' not in tex:
-            tex = tex + "\n\\begin{document}\n"
-        if '\\end{document}' not in tex:
-            tex = tex + "\n\\end{document}\n"
-
-        # Center the first header block (name/contact) if not already centered
-        lines = tex.split('\n')
-        try:
-            begin_doc_idx = next(i for i, l in enumerate(lines) if '\\begin{document}' in l)
-        except StopIteration:
-            begin_doc_idx = 0
-        for i in range(begin_doc_idx + 1, min(begin_doc_idx + 10, len(lines))):
-            if lines[i].strip() == '':
-                continue
-            if '\\begin{center}' not in '\n'.join(lines[i:i+5]):
-                block = []
-                j = i
-                while j < len(lines) and j < i + 5 and lines[j].strip() != '':
-                    block.append(lines[j])
-                    j += 1
-                centered = ['\\begin{center}'] + block + ['\\end{center}', '']
-                lines = lines[:i] + centered + lines[j:]
-            break
-        minimal_latex = '\n'.join(lines)
-
-        # Collapse excessive blank lines
-        minimal_latex = _re_pdf.sub(r"\n{3,}", "\n\n", minimal_latex)
+        # Use compile service to generate PDF
+        success, pdf_path, error_msg = compile_service.compile_latex(latex_content, project_id)
         
-        tex_file_path = os.path.join(temp_dir, f'resume_{project_id}.tex')
-        with open(tex_file_path, 'w', encoding='utf-8') as tex_file:
-            tex_file.write(minimal_latex)
-        
-        try:
-            # Use Tectonic as primary compiler (Overleaf-style)
-            # Fallback to MiKTeX if Tectonic not available
-            miktex_path = os.path.join(os.path.expanduser("~"), "AppData", "Local", "Programs", "MiKTeX", "miktex", "bin", "x64")
-            
-            # Ensure we use absolute paths and proper path separators
-            tex_file_path_abs = os.path.abspath(tex_file_path)
-            output_dir = os.path.dirname(tex_file_path_abs)
-            
-            # Try Tectonic first (Overleaf-style compilation)
-            compilers = [
-                ('tectonic', ['tectonic', '--synctex', '-Z', 'continue-on-errors', tex_file_path_abs]),
-                ('pdflatex', [os.path.join(miktex_path, 'pdflatex.exe'), '-interaction=nonstopmode', '-halt-on-error', '-file-line-error', '-output-directory', output_dir, tex_file_path_abs]),
-                ('xelatex', [os.path.join(miktex_path, 'xelatex.exe'), '-interaction=nonstopmode', '-halt-on-error', '-file-line-error', '-output-directory', output_dir, tex_file_path_abs]),
-                ('lualatex', [os.path.join(miktex_path, 'lualatex.exe'), '-interaction=nonstopmode', '-halt-on-error', '-file-line-error', '-output-directory', output_dir, tex_file_path_abs])
-            ]
-            
-            # Try Docker-based compilation as fallback
-            docker_compilers = [
-                ('docker-pdflatex', ['docker', 'run', '--rm', '-v', f'{os.path.dirname(tex_file_path)}:/workspace', 'texlive/texlive:latest', 'pdflatex', '-interaction=nonstopmode', f'/workspace/{os.path.basename(tex_file_path)}']),
-                ('docker-xelatex', ['docker', 'run', '--rm', '-v', f'{os.path.dirname(tex_file_path)}:/workspace', 'texlive/texlive:latest', 'xelatex', '-interaction=nonstopmode', f'/workspace/{os.path.basename(tex_file_path)}'])
-            ]
-            
-            pdf_path = tex_file_path_abs.replace('.tex', '.pdf')
-            compilation_success = False
-            
-            # Try local compilers first
-            all_compilers = compilers + docker_compilers
-            
-            for compiler_name, cmd in all_compilers:
-                try:
-                    print(f"🔧 DEBUG: Trying {compiler_name} compiler...")
-                    
-                    # Check if compiler is available (skip version check for Docker)
-                    if not compiler_name.startswith('docker-'):
-                        if os.path.exists(cmd[0]):
-                            print(f"✅ DEBUG: {compiler_name} found at {cmd[0]}, compiling to PDF")
-                        else:
-                            print(f"⚠️ DEBUG: {compiler_name} not found at {cmd[0]}, skipping")
-                            continue
-                    else:
-                        print(f"🐳 DEBUG: Trying Docker-based {compiler_name} compilation...")
-                    
-                    print(f"🔧 DEBUG: Running command: {' '.join(cmd)}")
-                    print(f"🔧 DEBUG: Working directory: {os.path.dirname(tex_file_path)}")
-                    
-                    # Run the compiler
-                    result = subprocess.run(
-                        cmd, 
-                        capture_output=True, 
-                        text=True, 
-                        timeout=15,  # Shorter timeout to avoid hanging
-                        cwd=os.path.dirname(tex_file_path)
-                    )
-                    
-                    print(f"🔧 DEBUG: {compiler_name} finished with return code: {result.returncode}")
-                    print(f"🔧 DEBUG: stdout: {result.stdout[:500]}")
-                    print(f"🔧 DEBUG: stderr: {result.stderr[:500]}")
-                    
-                    if result.returncode == 0 and os.path.exists(pdf_path):
-                        print(f"✅ DEBUG: PDF generated successfully with {compiler_name} at {pdf_path}")
-                        compilation_success = True
-                        break
-                    else:
-                        print(f"⚠️ DEBUG: {compiler_name} failed: {result.stderr}")
-                        # Clean up failed compilation files
-                        for ext in ['.aux', '.log', '.out', '.synctex.gz']:
-                            aux_file = tex_file_path.replace('.tex', ext)
-                            if os.path.exists(aux_file):
-                                try:
-                                    os.unlink(aux_file)
-                                except:
-                                    pass
-                        
-                except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
-                    print(f"⚠️ DEBUG: {compiler_name} not available: {str(e)}")
-                    continue
-            
-            if compilation_success:
-                print(f"✅ DEBUG: PDF compilation successful, serving file: {pdf_path}")
-                return FileResponse(
-                    path=pdf_path,
-                    media_type="application/pdf",
-                    filename=f"resume_{project_id}.pdf",
-                    headers={
-                        "Content-Disposition": f"inline; filename=resume_{project_id}.pdf",
-                        "X-Content-Type-Options": "nosniff",
-                        "Cache-Control": "no-store, no-cache, must-revalidate",
-                        "Pragma": "no-cache",
-                        "Expires": "0",
-                        "Access-Control-Allow-Origin": "*",
-                        "Access-Control-Allow-Methods": "GET",
-                        "Access-Control-Allow-Headers": "*"
-                    }
-                )
-            else:
-                print("❌ ERROR: All LaTeX compilers failed")
-                raise Exception("No LaTeX compiler available")
-                
-        except Exception as e:
-            print(f"❌ ERROR: PDF compilation error: {str(e)}")
-            print("🔄 DEBUG: Using HTML fallback for LaTeX rendering")
-            
-            # Create HTML version of the LaTeX content
-            html_content = convert_latex_to_html(project["resume_tex"])
-            
-            from fastapi.responses import HTMLResponse
-            return HTMLResponse(
-                content=html_content,
-                headers={"Content-Disposition": f"inline; filename=resume_{project_id}.html"}
+        if success and pdf_path and os.path.exists(pdf_path):
+            print(f"✅ DEBUG: PDF generated successfully at {pdf_path}")
+            return FileResponse(
+                path=pdf_path,
+                media_type="application/pdf",
+                filename=f"resume_{project_id}.pdf",
+                headers={
+                    "Content-Disposition": f"inline; filename=resume_{project_id}.pdf",
+                    "X-Content-Type-Options": "nosniff",
+                    "Cache-Control": "no-store, no-cache, must-revalidate",
+                    "Pragma": "no-cache",
+                    "Expires": "0",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET",
+                    "Access-Control-Allow-Headers": "*"
+                }
             )
-        finally:
-            # Clean up temporary files
-            try:
-                if os.path.exists(tex_file_path):
-                    os.unlink(tex_file_path)
-                # Clean up auxiliary files
-                for ext in ['.aux', '.log', '.out']:
-                    aux_file = tex_file_path.replace('.tex', ext)
-                    if os.path.exists(aux_file):
-                        os.unlink(aux_file)
-            except:
-                pass
+        else:
+            print(f"❌ ERROR: PDF compilation failed: {error_msg}")
+            raise HTTPException(status_code=500, detail=f"PDF compilation failed: {error_msg}")
         
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ ERROR: PDF endpoint failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/project/recreate")
-async def recreate_project(request: dict):
-    """Recreate a project from frontend data"""
-    try:
-        print(f"🔄 DEBUG: Recreating project from frontend data")
-        print(f"📄 DEBUG: Request data: {request}")
-        
-        project_id = request.get("id")
-        if not project_id:
-            raise HTTPException(status_code=400, detail="Project ID is required")
-        
-        # Store the project data
-        projects[project_id] = request
-        
-        print(f"✅ DEBUG: Project {project_id} recreated successfully")
-        return {"success": True, "project_id": project_id}
-        
-    except Exception as e:
-        print(f"❌ ERROR: Project recreation failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/project/{project_id}", response_model=ProjectResponse)
-async def get_project(project_id: str):
-    """Get current project state"""
-    try:
-        print(f"🔍 DEBUG: Getting project: {project_id}")
-        print(f"📁 DEBUG: Available projects: {list(projects.keys())}")
-        
-        if project_id not in projects:
-            print(f"❌ ERROR: Project {project_id} not found")
-            raise HTTPException(status_code=404, detail=f"Project {project_id} not found. Please upload a resume first.")
-        
-        project = projects[project_id]
-        return ProjectResponse(
-            id=project["id"],
-            resume_tex=project["resume_tex"],
-            compile_status=project["compile_status"],
-            outline=project["outline"]
-        )
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")
 async def health_check():
@@ -1463,25 +981,6 @@ async def health_check():
     return {"status": "healthy", "service": "resume-builder-api"}
 
 
-@app.get("/project/{project_id}")
-async def get_project(project_id: str):
-    """Get project by ID"""
-    print(f"🔍 DEBUG: Getting project: {project_id}")
-    print(f"📁 DEBUG: Available projects: {list(projects.keys())}")
-    
-    if project_id not in projects:
-        print(f"❌ ERROR: Project {project_id} not found")
-        raise HTTPException(status_code=404, detail="Project not found")
-    
-    project = projects[project_id]
-    print(f"✅ DEBUG: Found project: {project_id}")
-    
-    return {
-        "id": project_id,
-        "resume_tex": project.get('resume_tex', ''),
-        "pdf_url": f"http://localhost:8000/artifact/pdf/{project_id}",
-        "reconstruction_note": project.get('reconstruction_note', 'Resume converted using AI-powered approach')
-    }
 
 
 if __name__ == "__main__":
