@@ -61,9 +61,6 @@ export const ChatPanel = () => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
 
-    console.log('🔍 DEBUG: ChatPanel - Starting AI chat');
-    console.log('📝 DEBUG: Message:', input.trim());
-
     const userMessage: Message = {
       id: Date.now().toString(),
       type: 'user',
@@ -80,16 +77,16 @@ export const ChatPanel = () => {
       // Get current project
       const projectData = sessionStorage.getItem('currentProject');
       const currentProject = projectData ? JSON.parse(projectData) : null;
-      
-      console.log('📁 DEBUG: Project data from sessionStorage:', currentProject ? 'Found' : 'Not found');
-      
+
+      console.log('💬 Chat request:', message.substring(0, 50) + '...');
+
       // Prepare chat history
       const chatHistory = messages.map(m => ({
         role: m.type === 'user' ? 'user' : 'assistant',
         content: m.content
       }));
-      
-      // Call the AI chat endpoint
+
+      // Call improved chat endpoint with direct LaTeX updates
       const response = await fetch('http://localhost:8000/llm/chat', {
         method: 'POST',
         headers: {
@@ -98,60 +95,51 @@ export const ChatPanel = () => {
         body: JSON.stringify({
           message: message,
           chat_history: chatHistory,
-          current_resume: currentProject?.resume_tex,
+          current_resume: currentProject?.resume_tex || '',
           context: {
             has_resume: !!currentProject,
-            resume_length: currentProject?.resume_tex?.length || 0
+            resume_length: currentProject?.resume_tex?.length || 0,
+            project_id: currentProject?.id || 'default'
           }
         })
       });
 
       if (!response.ok) {
-        throw new Error('Failed to get response from AI agent');
+        const errorText = await response.text();
+        throw new Error(`AI service error: ${errorText}`);
       }
 
       const data = await response.json();
-      console.log('📥 DEBUG: Received AI response:', data);
-      
+
+      // Display AI response
       const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
         type: 'assistant',
-        content: data.response,
+        content: data.response + (data.explanation ? `\n\n_${data.explanation}_` : ''),
         timestamp: new Date()
       };
       setMessages(prev => [...prev, aiMessage]);
-      
-      // If this is a resume update, handle it
-      if (data.is_resume_update && data.resume_data && currentProject) {
-        console.log('🔄 DEBUG: Resume updated by AI agent');
-        const updatedProject = { ...currentProject, resume_tex: data.resume_data };
-        sessionStorage.setItem('currentProject', JSON.stringify(updatedProject));
-        window.dispatchEvent(new CustomEvent('projectUpdated', { detail: updatedProject }));
-      }
-      
-      // Check if this is a patch generation request (for backward compatibility)
-      const patchKeywords = ['change', 'modify', 'add', 'remove', 'delete', 'improve', 'fix', 'update'];
-      const isPatchRequest = patchKeywords.some(keyword => message.toLowerCase().includes(keyword));
-      
-      if (isPatchRequest && currentProject) {
-        console.log('🔧 DEBUG: Detected patch request, generating changes...');
-        try {
-          const { apiClient } = await import('../lib/api');
-          const patchResult = await apiClient.generatePatch(message, undefined, false, currentProject.id, currentProject);
-          console.log('📥 DEBUG: Generated patch result:', patchResult);
-          
-          // Store patch result for the workspace
-          sessionStorage.setItem('currentPatch', JSON.stringify(patchResult));
-          
-          // Trigger workspace update
-          window.dispatchEvent(new CustomEvent('patchGenerated', { detail: patchResult }));
-        } catch (patchError) {
-          console.log('⚠️ DEBUG: Patch generation failed, but chat response was successful:', patchError);
+
+      // Handle resume updates (direct LaTeX from AI)
+      if (data.is_resume_update && data.resume_data) {
+        console.log('✅ Resume updated by AI (' + data.resume_data.length + ' chars)');
+
+        if (currentProject) {
+          const updatedProject = {
+            ...currentProject,
+            resume_tex: data.resume_data,
+            last_updated: new Date().toISOString()
+          };
+          sessionStorage.setItem('currentProject', JSON.stringify(updatedProject));
+
+          // Notify other components of the update
+          window.dispatchEvent(new CustomEvent('projectUpdated', { detail: updatedProject }));
+          console.log('📤 Notified components of resume update');
         }
       }
-      
+
     } catch (error) {
-      console.error('❌ ERROR: AI chat failed:', error);
+      console.error('❌ Chat error:', error);
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         type: 'assistant',
@@ -251,20 +239,20 @@ export const ChatPanel = () => {
        <div className="p-4 border-t border-slate-700 bg-slate-800">
          <form onSubmit={handleSubmit} className="flex gap-3">
            <div className="flex-1 relative">
-             <Textarea
-               ref={textareaRef}
-               value={input}
-               onChange={(e) => setInput(e.target.value)}
+           <Textarea
+             ref={textareaRef}
+             value={input}
+             onChange={(e) => setInput(e.target.value)}
                onKeyPress={handleKeyPress}
                placeholder="Ask me to improve your resume... (Press Enter to send, Shift+Enter for new line)"
                className="w-full bg-slate-700/50 border-slate-600 text-white placeholder-slate-400 resize-none min-h-[48px] max-h-[140px] pr-12 py-3 px-4 focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 transition-all duration-200 scrollbar-thin scrollbar-thumb-slate-500 scrollbar-track-slate-700 hover:scrollbar-thumb-slate-400"
-               disabled={isLoading}
-               rows={1}
+             disabled={isLoading}
+             rows={1}
                style={{
                  scrollbarWidth: 'thin',
                  scrollbarColor: '#64748b #1e293b'
                }}
-             />
+           />
              <div className="absolute right-2 top-1/2 transform -translate-y-1/2 text-xs text-slate-500">
                {isLoading ? 'Sending...' : 'Enter to send'}
              </div>
@@ -278,7 +266,7 @@ export const ChatPanel = () => {
              {isLoading ? (
                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
              ) : (
-               <Send className="w-4 h-4" />
+             <Send className="w-4 h-4" />
              )}
            </Button>
          </form>

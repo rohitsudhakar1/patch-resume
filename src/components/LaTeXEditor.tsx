@@ -18,6 +18,7 @@ export interface Change {
 interface LaTeXEditorProps {
   changes: Change[];
   onContentChange?: (content: string) => void;
+  content?: string;
 }
 
 /* ------------------------------ Normalization ------------------------------ */
@@ -127,6 +128,7 @@ function hashString(s: string): number {
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i);
   return h >>> 0;
 }
+
 function makeFingerprint(changes: Change[]): string {
   const parts = changes.map(c => {
     const start = c.startLine ?? c.start_line ?? 0;
@@ -232,29 +234,34 @@ function DiffPreview({ content, normChanges }: { content: string; normChanges: N
 
 /* -------------------------------- Component -------------------------------- */
 
-export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorProps) {
+export default function LaTeXEditor({ changes, onContentChange, content: propContent }: LaTeXEditorProps) {
   const [content, setContent] = useState<string>('');
   const [processedIds, setProcessedIds] = useState<Set<string>>(new Set());
   const [lastFingerprint, setLastFingerprint] = useState<string>('');
-  const [autoApply, setAutoApply] = useState(false);
-  const [tab, setTab] = useState<'edit' | 'diff'>('diff');
+  const [tab, setTab] = useState<'edit'>('edit');
 
-  // Load from sessionStorage
+  // Load from sessionStorage or prop
   useEffect(() => {
-    const projectData = sessionStorage.getItem('currentProject');
-    if (projectData) {
-      try {
-      const project = JSON.parse(projectData);
-        if (project?.resume_tex) {
-          const cleaned = cleanEditorContent(project.resume_tex);
-          setContent(cleaned);
-          (window as any).latexEditorContent = cleaned;
-          project.resume_tex = cleaned;
-          sessionStorage.setItem('currentProject', JSON.stringify(project));
-        }
-      } catch {}
+    if (propContent) {
+      const cleaned = cleanEditorContent(propContent);
+      setContent(cleaned);
+      (window as any).latexEditorContent = cleaned;
+    } else {
+      const projectData = sessionStorage.getItem('currentProject');
+      if (projectData) {
+        try {
+          const project = JSON.parse(projectData);
+          if (project?.resume_tex) {
+            const cleaned = cleanEditorContent(project.resume_tex);
+            setContent(cleaned);
+            (window as any).latexEditorContent = cleaned;
+            project.resume_tex = cleaned;
+            sessionStorage.setItem('currentProject', JSON.stringify(project));
+          }
+        } catch {}
+      }
     }
-  }, []);
+  }, [propContent]);
 
   // keep global mirror
   useEffect(() => {
@@ -264,12 +271,14 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
   // listen for external updates
   useEffect(() => {
     const handler = () => {
+      console.log('📥 DEBUG: LaTeXEditor received projectUpdated event');
       const projectData = sessionStorage.getItem('currentProject');
       if (!projectData) return;
       try {
         const project = JSON.parse(projectData);
         if (project?.resume_tex) {
           const cleaned = cleanEditorContent(project.resume_tex);
+          console.log('✅ DEBUG: Updated LaTeX editor with new content (length:', cleaned.length, ')');
           setContent(cleaned);
           (window as any).latexEditorContent = cleaned;
           project.resume_tex = cleaned;
@@ -324,9 +333,9 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
     onContentChange?.(cleaned);
   };
 
-  /* -------------------------- Batch apply (robust) -------------------------- */
+  /* -------------------------- Auto-apply all changes -------------------------- */
 
-  const applyChangesInBatch = async (ids: string[], accept: boolean) => {
+  const applyChangesInBatch = async (ids: string[]) => {
     if (!ids.length) return;
 
     const byId = new Map(normChanges.map((c) => [c.id, c]));
@@ -346,12 +355,6 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
 
     for (const ch of toApply) {
       if (processed.has(ch.id)) continue;
-
-      if (!accept) {
-        processed.add(ch.id);
-        window.dispatchEvent(new CustomEvent('changeAccepted', { detail: { changeId: ch.id, accepted: false } }));
-        continue;
-      }
 
       const siblings = byStart.get(ch.start) || [];
       const hasAdd = siblings.some(s => s.type === 'addition' && ids.includes(s.id));
@@ -420,7 +423,7 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
 
     const newContent = lines.join('\n');
     if (newContent !== content) {
-    setContent(newContent);
+      setContent(newContent);
       (window as any).latexEditorContent = newContent;
       await persistProject(newContent);
       onContentChange?.(newContent);
@@ -432,28 +435,15 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
     });
   };
 
-  const handleApplyChange = (id: string, accepted: boolean) =>
-    applyChangesInBatch([id], accepted);
-
-  // auto-apply all (one batch)
+  // Auto-apply all changes immediately
   useEffect(() => {
-    if (!autoApply || activeChanges.length === 0) return;
-    applyChangesInBatch(activeChanges.map((c) => c.id), true);
+    if (activeChanges.length === 0) return;
+    console.log(`🔄 Auto-applying ${activeChanges.length} changes`);
+    applyChangesInBatch(activeChanges.map((c) => c.id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoApply, activeChanges.length]);
+  }, [activeChanges.length]);
 
-  // UI grouping for single-permission replacements
-  const groups = useMemo(() => {
-    const m = new Map<number, Change[]>();
-    activeChanges.forEach((c) => {
-      const ln = c.startLine ?? c.start_line ?? 1;
-      if (!m.has(ln)) m.set(ln, []);
-      m.get(ln)!.push(c);
-    });
-    return m;
-  }, [activeChanges]);
-
-                return (
+  return (
     <div className="flex h-full bg-slate-900">
       {/* Left: Editor / Diff */}
       <div className="flex-1 flex flex-col">
@@ -461,58 +451,21 @@ export default function LaTeXEditor({ changes, onContentChange }: LaTeXEditorPro
           <h2 className="text-lg font-semibold text-slate-200">LaTeX Editor</h2>
           <div className="flex items-center gap-4">
             <div className="text-sm text-slate-400">
-              {activeChanges.length} change{activeChanges.length === 1 ? '' : 's'} pending
-            </div>
-            <label className="flex items-center gap-2 text-sm text-slate-300">
-              <input
-                type="checkbox"
-                checked={autoApply}
-                onChange={(e) => setAutoApply(e.target.checked)}
-                className="w-4 h-4 text-blue-600 bg-slate-700 border-slate-600 rounded focus:ring-blue-500"
-              />
-              Auto-apply
-            </label>
-            {!autoApply && activeChanges.length > 0 && (
-              <button
-                onClick={() => applyChangesInBatch(activeChanges.map((c) => c.id), true)}
-                className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-              >
-                Apply All
-              </button>
-            )}
-            <div className="inline-flex rounded-md overflow-hidden border border-slate-600">
-              <button
-                className={`px-3 py-1 text-sm ${tab === 'edit' ? 'bg-slate-700 text-slate-100' : 'bg-slate-800 text-slate-300'}`}
-                onClick={() => setTab('edit')}
-              >
-                Edit
-              </button>
-              <button
-                className={`px-3 py-1 text-sm ${tab === 'diff' ? 'bg-slate-700 text-slate-100' : 'bg-slate-800 text-slate-300'}`}
-                onClick={() => setTab('diff')}
-              >
-                Diff
-              </button>
+              {activeChanges.length > 0 ? `Applying ${activeChanges.length} change${activeChanges.length === 1 ? '' : 's'}...` : 'No pending changes'}
             </div>
           </div>
-      </div>
-      
+        </div>
+        
         <div className="flex-1 overflow-auto p-4">
-          {tab === 'edit' ? (
-              <textarea
-                value={content}
-                onChange={(e) => handleContentChange(e.target.value)}
-              className="w-full h-full bg-slate-800 text-slate-300 font-mono text-sm p-4 border border-slate-600 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="LaTeX content will appear here..."
-              style={{ minHeight: '500px' }}
-              />
-          ) : (
-            <DiffPreview content={content} normChanges={normalizeChanges(activeChanges)} />
-          )}
-            </div>
+          <textarea
+            value={content}
+            onChange={(e) => handleContentChange(e.target.value)}
+            className="w-full h-full bg-slate-800 text-slate-300 font-mono text-sm p-4 border border-slate-600 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="LaTeX content will appear here..."
+            style={{ minHeight: '500px' }}
+          />
+        </div>
       </div>
-
-      {/* Inline-only presentation: sidebar removed */}
     </div>
   );
 }

@@ -8,41 +8,28 @@ class TemplateService:
     """Service for rendering structured resume data to LaTeX with professional formatting"""
     
     def _get_preamble(self) -> str:
-        """Generate clean LaTeX preamble"""
-        return r"""\documentclass[a4paper]{article}
+        """Generate clean ATS-friendly LaTeX preamble - simple, no fancy formatting"""
+        return r"""\documentclass[11pt,letterpaper]{article}
 
-% ---------- Margins ----------
-\usepackage[left=0.7in, right=0.7in, top=0.5in, bottom=0.5in]{geometry}
+% ---------- ATS-Friendly Margins ----------
+\usepackage[margin=1in]{geometry}
 
 % ---------- Links ----------
 \usepackage[hidelinks]{hyperref}
 
-% ---------- Lists / Titles ----------
+% ---------- Lists ----------
 \usepackage{enumitem}
-\usepackage{titlesec}
 
-% ---------- Global tight spacing ----------
+% ---------- Simple, clean formatting ----------
 \setlength{\parindent}{0pt}
-\setlength{\parskip}{0pt}
-\renewcommand{\baselinestretch}{0.84}
-\footnotesize
+\setlength{\parskip}{6pt}
+\renewcommand{\baselinestretch}{1.0}
 
-% Compact section spacing
-\titlespacing*{\section}{0pt}{0.3ex}{0.5ex}
-\titleformat{\section}{\normalsize\bfseries}{}{}{}[]
+% ATS-friendly section formatting
+\newcommand{\sectiontitle}[1]{\vspace{12pt}\textbf{\large #1}\vspace{6pt}\rule{\textwidth}{0.5pt}\vspace{6pt}}
 
-% Compact bullets (global)
-\setlist[itemize]{leftmargin=*, label=\textbullet, nosep, topsep=0.2ex, itemsep=0.2ex, parsep=0pt, partopsep=0pt}
-
-% Thin separator line used under section titles
-\newcommand{\sectionline}{%
-  \par\vspace{0.2ex}%
-  \noindent\rule{\linewidth}{0.25pt}%
-  \par\vspace{0.2ex}%
-}
-
-% Small vertical spacer between entries
-\newcommand{\entryspace}{\vspace{0.35em}}
+% Clean bullets
+\setlist[itemize]{leftmargin=20pt, label=\textbullet, topsep=3pt, itemsep=2pt}
 
 """
     
@@ -91,17 +78,17 @@ class TemplateService:
         return '\n'.join(latex_parts)
     
     def _render_header(self, basics: Dict[str, Any]) -> str:
-        """Render the centered header section"""
+        """Render simple ATS-friendly header section"""
         if not basics:
             return ""
         
         header_parts = []
         
-        # Name
+        # Name - simple, no fancy formatting
         if basics.get('name'):
             header_parts.append(f"\\textbf{{{self._escape_latex(basics['name'])}}}")
         
-        # Contact info
+        # Contact info - simple line
         contact_items = []
         if basics.get('email'):
             contact_items.append(self._escape_latex(basics['email']))
@@ -113,7 +100,7 @@ class TemplateService:
             contact_items.append(f"\\href{{{basics['linkedin']}}}{{linkedin.com/in/rohit-sudhakar-ce}}")
         
         if contact_items:
-            header_parts.append(" \\\\ ".join(contact_items))
+            header_parts.append(" | ".join(contact_items))
         
         if header_parts:
             return "\\begin{center}\n" + " \\\\\n".join(header_parts) + "\n\\end{center}"
@@ -121,11 +108,11 @@ class TemplateService:
         return ""
     
     def _render_section(self, section_key: str, section_data: Any, section_title: str) -> str:
-        """Render a specific section"""
+        """Render a specific section with simple ATS-friendly formatting"""
         if not section_data:
             return ""
         
-        section_parts = [f"\\section*{{{section_title}}}", "\\sectionline"]
+        section_parts = [f"\\sectiontitle{{{section_title}}}"]
         
         if section_key == 'summary':
             section_parts.append(self._escape_latex(str(section_data)))
@@ -141,7 +128,7 @@ class TemplateService:
         return '\n'.join(section_parts)
     
     def _render_experience(self, experience: list) -> list:
-        """Render experience entries"""
+        """Render experience entries with simple ATS-friendly formatting"""
         if not experience:
             return []
         
@@ -150,17 +137,15 @@ class TemplateService:
             if not entry:
                 continue
                 
-            # Job title and company
+            # Job title and company - separate lines for ATS
             title = entry.get('title', '')
             company = entry.get('company', '')
-            if title and company:
-                parts.append(f"\\textbf{{{self._escape_latex(title)} at {self._escape_latex(company)}}}")
-            elif title:
+            if title:
                 parts.append(f"\\textbf{{{self._escape_latex(title)}}}")
-            elif company:
+            if company:
                 parts.append(f"\\textbf{{{self._escape_latex(company)}}}")
             
-            # Dates and location with hfill alignment
+            # Dates and location - simple format
             date_location = []
             if entry.get('start_date') or entry.get('end_date'):
                 dates = []
@@ -176,7 +161,7 @@ class TemplateService:
             if date_location:
                 parts.append(f"\\textit{{{' | '.join(date_location)}}}")
             
-            # Bullet points
+            # Bullet points - simple format
             if entry.get('description'):
                 parts.append("\\begin{itemize}")
                 # Handle both string and list descriptions
@@ -189,12 +174,12 @@ class TemplateService:
                         parts.append(f"\\item {self._escape_latex(desc.strip())}")
                 
                 parts.append("\\end{itemize}")
-                parts.append("\\entryspace")  # Add spacing after experience entry
+                parts.append("\\vspace{6pt}")  # Simple spacing after experience entry
         
         return parts
     
     def _render_education(self, education: list) -> list:
-        """Render education entries"""
+        """Render education entries with simple ATS-friendly formatting"""
         if not education:
             return []
         
@@ -208,11 +193,11 @@ class TemplateService:
             if school:
                 parts.append(f"\\textbf{{{self._escape_latex(school)}}}")
             
-            # Degree and dates with hfill alignment
-            degree_info = []
+            # Degree - separate line for ATS
             if entry.get('degree'):
-                degree_info.append(self._escape_latex(entry['degree']))
+                parts.append(f"\\textbf{{{self._escape_latex(entry['degree'])}}}")
             
+            # Dates - separate line for ATS
             if entry.get('start_date') or entry.get('end_date'):
                 dates = []
                 if entry.get('start_date'):
@@ -220,10 +205,7 @@ class TemplateService:
                 if entry.get('end_date'):
                     dates.append(self._escape_latex(entry['end_date']))
                 if dates:
-                    degree_info.append("\\textit{" + " - ".join(dates) + "}")
-            
-            if degree_info:
-                parts.append(" \\\\ ".join(degree_info))
+                    parts.append(f"\\textit{{{' - '.join(dates)}}}")
             
             # GPA and other details
             if entry.get('gpa'):
@@ -232,12 +214,12 @@ class TemplateService:
             if entry.get('honors'):
                 parts.append(self._escape_latex(entry['honors']))
             
-            parts.append("")  # Blank line after education entry
+            parts.append("\\vspace{6pt}")  # Simple spacing after education entry
         
         return parts
     
     def _render_projects(self, projects: list) -> list:
-        """Render project entries"""
+        """Render project entries with simple ATS-friendly formatting"""
         if not projects:
             return []
         
@@ -246,16 +228,17 @@ class TemplateService:
             if not project:
                 continue
             
-            # Project name and tech stack
+            # Project name - separate line for ATS
             name = project.get('name', '')
-            tech_stack = project.get('tech_stack', '')
-            
-            if name and tech_stack:
-                parts.append(f"\\textbf{{{self._escape_latex(name)}}} ({self._escape_latex(tech_stack)})")
-            elif name:
+            if name:
                 parts.append(f"\\textbf{{{self._escape_latex(name)}}}")
             
-            # Dates
+            # Tech stack - separate line for ATS
+            tech_stack = project.get('tech_stack', '')
+            if tech_stack:
+                parts.append(f"\\textit{{{self._escape_latex(tech_stack)}}}")
+            
+            # Dates - simple format
             if project.get('start_date') or project.get('end_date'):
                 dates = []
                 if project.get('start_date'):
@@ -265,7 +248,7 @@ class TemplateService:
                 if dates:
                     parts.append(f"\\textit{{{' - '.join(dates)}}}")
             
-            # Description
+            # Description - simple format
             if project.get('description'):
                 parts.append("\\begin{itemize}")
                 descriptions = project['description']
@@ -277,7 +260,7 @@ class TemplateService:
                         parts.append(f"\\item {self._escape_latex(desc.strip())}")
                 
                 parts.append("\\end{itemize}")
-                parts.append("\\entryspace")
+                parts.append("\\vspace{6pt}")  # Simple spacing after project entry
         
         return parts
     

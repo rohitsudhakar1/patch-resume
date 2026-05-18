@@ -28,6 +28,18 @@ __pycache__/
 **/__pycache__/
 *.pyc
 
+# Env files
+.env
+.env.local
+backend/.env
+backend/.env.local
+
+# User data backups (contain real resume data)
+backend/projects_backup.json
+
+# Claude Code local settings
+.claude/
+
 # LaTeX build artifacts
 temp_latex/
 backend/temp_latex/

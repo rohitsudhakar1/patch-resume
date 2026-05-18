@@ -20,31 +20,30 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ project }) => {
   // Listen for project updates to force PDF regeneration
   useEffect(() => {
     const handleProjectUpdate = (event: CustomEvent) => {
-      console.log('🔄 DEBUG: PDFViewer received project update, regenerating PDF...');
-      console.log('🔄 DEBUG: Project update event detail:', event.detail);
-      
+      console.log('📥 DEBUG: PDFViewer received project update event');
+
       if (event.detail && event.detail.id) {
         // Update the project state with the new data
         const updatedProject = event.detail;
-        console.log('🔄 DEBUG: Updated project data:', updatedProject);
-        
-        // Force PDF regeneration by updating the URL
+        console.log('🔄 DEBUG: PDF regeneration triggered for project:', updatedProject.id);
+
+        // Force PDF regeneration by updating the URL with timestamp
         const newPdfUrl = `http://localhost:8000/artifact/pdf/${updatedProject.id}?t=${Date.now()}`;
-        console.log('🔄 DEBUG: Regenerating PDF with new URL:', newPdfUrl);
+        console.log('🔄 DEBUG: PDF regenerated with URL:', newPdfUrl);
         setPdfUrl(newPdfUrl);
         setIsLoading(true);
         setPdfError(false);
-        
-        // Also trigger a full PDF reload
+
+        // Also trigger a full PDF reload after delay to ensure backend compilation completes
         setTimeout(() => {
           const reloadPdfUrl = `http://localhost:8000/artifact/pdf/${updatedProject.id}?t=${Date.now()}`;
-          console.log('🔄 DEBUG: Force reloading PDF with URL:', reloadPdfUrl);
+          console.log('🔄 DEBUG: Force reloading PDF');
           setPdfUrl(reloadPdfUrl);
         }, 500);
       } else if (project?.id) {
         // Fallback to current project ID
         const newPdfUrl = `http://localhost:8000/artifact/pdf/${project.id}?t=${Date.now()}`;
-        console.log('🔄 DEBUG: Regenerating PDF with current project URL:', newPdfUrl);
+        console.log('🔄 DEBUG: PDF regeneration (fallback) with URL:', newPdfUrl);
         setPdfUrl(newPdfUrl);
         setIsLoading(true);
         setPdfError(false);
@@ -72,90 +71,18 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ project }) => {
 
   useEffect(() => {
     if (project?.id) {
-      console.log('📄 DEBUG: PDFViewer loaded project:', project);
+      console.log('📄 DEBUG: PDFViewer project prop changed:', project.id);
+
+      // Just load the PDF - backend already has the latest content
+      // DO NOT recreate project here as it may overwrite fresh changes from chat
+      const pdfUrl = `http://localhost:8000/artifact/pdf/${project.id}?t=${Date.now()}`;
+      console.log('📄 DEBUG: Loading PDF from:', pdfUrl);
+      setPdfUrl(pdfUrl);
       setIsLoading(true);
       setPdfError(false);
       setErrorMessage('');
-      
-      // Always recreate the project first to ensure backend has the data
-      const loadPDF = async () => {
-        try {
-          console.log('🔄 DEBUG: Ensuring project exists in backend...');
-          
-          // Get the current content from sessionStorage
-          const currentContent = sessionStorage.getItem('currentProject');
-          let projectData = project;
-          
-          if (currentContent) {
-            try {
-              const currentProject = JSON.parse(currentContent);
-              projectData = {
-                ...project,
-                resume_tex: currentProject.resume_tex || project.resume_tex
-              };
-              console.log('📄 DEBUG: Using data from sessionStorage');
-              console.log('📄 DEBUG: Resume content length:', projectData.resume_tex.length);
-              console.log('📄 DEBUG: Resume content preview:', projectData.resume_tex.substring(0, 200));
-            } catch (e) {
-              console.log('⚠️ DEBUG: Could not parse sessionStorage data, using project data');
-            }
-          }
-          
-          // Also try to get content from the LaTeX editor if available
-          const latexEditorContent = (window as any).latexEditorContent;
-          if (latexEditorContent && latexEditorContent.length > 0) {
-            console.log('📄 DEBUG: Using content from LaTeX editor');
-            console.log('📄 DEBUG: LaTeX editor content length:', latexEditorContent.length);
-            console.log('📄 DEBUG: LaTeX editor content preview:', latexEditorContent.substring(0, 200));
-            projectData = {
-              ...project,
-              resume_tex: latexEditorContent
-            };
-          }
-          
-          console.log('📄 DEBUG: Sending project data for recreation:', projectData);
-          
-          // Always recreate the project to ensure backend has the latest data
-          const recreateResponse = await fetch('http://localhost:8000/project/recreate', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(projectData),
-          });
-          
-          if (recreateResponse.ok) {
-            console.log('✅ DEBUG: Project recreated successfully');
-            // Now try to load the PDF
-            const pdfUrl = `http://localhost:8000/artifact/pdf/${project.id}?t=${Date.now()}`;
-            console.log('📄 DEBUG: Loading PDF from:', pdfUrl);
-            setPdfUrl(pdfUrl);
-            
-            // Force PDF reload by updating the URL after a short delay to ensure regeneration
-            setTimeout(() => {
-              const newPdfUrl = `http://localhost:8000/artifact/pdf/${project.id}?t=${Date.now()}`;
-              console.log('🔄 DEBUG: Forcing PDF reload with new URL:', newPdfUrl);
-              setPdfUrl(newPdfUrl);
-            }, 200);
-            
-            setIsLoading(false);
-          } else {
-            console.log('❌ DEBUG: Project recreation failed');
-            setPdfError(true);
-            setErrorMessage('Failed to recreate project');
-            setIsLoading(false);
-          }
-        } catch (error) {
-          console.log('❌ DEBUG: Error loading PDF:', error);
-          setPdfError(true);
-          setErrorMessage('Failed to load PDF');
-          setIsLoading(false);
-        }
-      };
-      
-      loadPDF();
     }
-  }, [project]);
+  }, [project?.id]);
 
   const handleChangeClick = (changeId: string) => {
     // Switch to LaTeX tab and highlight the change
@@ -181,66 +108,11 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ project }) => {
       setIsLoading(true);
       setPdfError(false);
       setErrorMessage('');
-      
-      // Recreate the project and load PDF
-      const loadPDF = async () => {
-        try {
-          console.log('🔄 DEBUG: Recreating project for retry...');
-          
-          // Get the current content from sessionStorage
-          const currentContent = sessionStorage.getItem('currentProject');
-          let projectData = project;
-          
-          if (currentContent) {
-            try {
-              const currentProject = JSON.parse(currentContent);
-              projectData = {
-                ...project,
-                resume_tex: currentProject.resume_tex || project.resume_tex
-              };
-            } catch (e) {
-              console.log('⚠️ DEBUG: Could not parse sessionStorage data, using project data');
-            }
-          }
-          
-          // Also try to get content from the LaTeX editor if available
-          const latexEditorContent = (window as any).latexEditorContent;
-          if (latexEditorContent && latexEditorContent.length > 0) {
-            projectData = {
-              ...project,
-              resume_tex: latexEditorContent
-            };
-          }
-          
-          // Recreate the project
-          const recreateResponse = await fetch('http://localhost:8000/project/recreate', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(projectData),
-          });
-          
-          if (recreateResponse.ok) {
-            console.log('✅ DEBUG: Project recreated successfully for retry');
-            const newPdfUrl = `http://localhost:8000/artifact/pdf/${project.id}?t=${Date.now()}`;
-            setPdfUrl(newPdfUrl);
-            setIsLoading(false);
-          } else {
-            console.log('❌ DEBUG: Project recreation failed for retry');
-            setPdfError(true);
-            setErrorMessage('Failed to recreate project');
-            setIsLoading(false);
-          }
-        } catch (error) {
-          console.log('❌ DEBUG: Error in retry:', error);
-          setPdfError(true);
-          setErrorMessage('Failed to retry PDF load');
-          setIsLoading(false);
-        }
-      };
-      
-      loadPDF();
+
+      // Just request the PDF again - backend already has the content
+      const newPdfUrl = `http://localhost:8000/artifact/pdf/${project.id}?t=${Date.now()}`;
+      console.log('🔄 DEBUG: Requesting PDF again:', newPdfUrl);
+      setPdfUrl(newPdfUrl);
     }
   };
 
@@ -333,14 +205,6 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ project }) => {
                   />
                 </div>
                 
-                {/* Page break indicator */}
-                <div className="mt-4 text-center">
-                  <div className="inline-flex items-center gap-2 text-slate-500 text-sm">
-                    <div className="w-8 h-px bg-slate-400"></div>
-                    <span>Page 1</span>
-                    <div className="w-8 h-px bg-slate-400"></div>
-                  </div>
-                </div>
               </div>
             </div>
           </div>

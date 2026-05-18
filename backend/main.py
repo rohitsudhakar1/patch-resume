@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 # Import services
 from services.template_service import TemplateService
 from services.compile_service import CompileService
-from services.simple_parse_service import SimpleParseService
+from services.clean_parse_service import CleanParseService
 
 # Load environment variables from .env file
 try:
@@ -27,9 +27,146 @@ try:
 except Exception as e:
     print(f"⚠️ WARNING: Could not load .env file: {e}")
 
-# Set OpenAI API key directly
-openai.api_key = "***REMOVED***"
-print("✅ DEBUG: OpenAI API key set successfully")
+openai.api_key = os.getenv("OPENAI_API_KEY")
+if not openai.api_key:
+    print("⚠️ WARNING: OPENAI_API_KEY not set in environment")
+
+# --- Comprehensive LaTeX Cleaning System ---
+
+# Patterns for broken/malformed LaTeX commands
+BAD_LATEX_PATTERNS = [
+    # Broken command patterns
+    r'(?i)\bewcommand\b',  # broken \newcommand
+    r'(?i)^\s*ewcommand',  # bare ewcommand without backslash
+    r'(?i)ewcommand\[1\]1',  # specific broken pattern
+    r'(?i)\bparindent\s+\d+pt\b',  # bare parindent
+    r'(?i)\bparskip\s+\d+pt\b',   # bare parskip
+    r'(?i)\baselinestretch\s*[\d.]+\b',  # bare baselinestretch
+    r'(?i)^\s*(parindent|parskip|aselinestretch|aselinespread)\b',  # other bare commands
+    r'(?i)\\\\(?!\s*$|\s*\\)',  # double backslashes not at line end or before command
+    r'\\[a-zA-Z]+\{[^}]*$',  # incomplete commands with opening brace but no closing
+    r'^[^\\]*\}[^\\]*$',  # lines with closing brace but no opening command
+    r'(?i)undefined\s*control\s*sequence',  # LaTeX error text
+    r'(?i)missing\s*\$\s*inserted',  # LaTeX error text
+]
+
+# Comprehensive LaTeX cleaning function
+def clean_latex_content(tex: str, max_iterations: int = 3) -> tuple[str, bool, list]:
+    """
+    Comprehensive LaTeX cleaning that removes malformed commands and fixes formatting.
+    Returns (cleaned_tex, was_changed, issues_found)
+    """
+    if not tex:
+        return tex, False, []
+    
+    original_tex = tex
+    issues_found = []
+    changed = False
+    
+    for iteration in range(max_iterations):
+        iteration_changed = False
+        
+        # Step 1: Remove bad patterns
+        for pattern in BAD_LATEX_PATTERNS:
+            if re.search(pattern, tex):
+                old_tex = tex
+                tex = re.sub(pattern, '', tex)
+                if tex != old_tex:
+                    iteration_changed = True
+                    issues_found.append(f"Removed bad pattern: {pattern}")
+        
+        # Step 2: Fix specific broken commands
+        fixes = [
+            (r'\\textbf\{([^}]*)$', r'\\textbf{\1}'),  # Fix incomplete textbf
+            (r'\\textit\{([^}]*)$', r'\\textit{\1}'),  # Fix incomplete textit
+            (r'\\section\*?\{([^}]*)$', r'\\section*{\1}'),  # Fix incomplete sections
+            (r'\\begin\{([^}]+)\}\s*$\s*(?!\\end)', r'\\begin{\1}\n\\end{\1}'),  # Fix incomplete environments
+            (r'ewcommand(?!\\)', r''),  # Remove bare ewcommand
+            (r'\\\\\\+', r'\\\\'),  # Fix multiple backslashes
+            (r'\n\s*\n\s*\n+', r'\n\n'),  # Fix excessive blank lines
+            (r'\{\{+', r'{'),  # Fix multiple opening braces
+            (r'\}\}+', r'}'),  # Fix multiple closing braces
+        ]
+        
+        for pattern, replacement in fixes:
+            if re.search(pattern, tex):
+                old_tex = tex
+                tex = re.sub(pattern, replacement, tex)
+                if tex != old_tex:
+                    iteration_changed = True
+                    issues_found.append(f"Applied fix: {pattern} -> {replacement}")
+        
+        # Step 3: Ensure proper LaTeX structure
+        lines = tex.split('\n')
+        cleaned_lines = []
+        in_document = False
+        has_documentclass = False
+        
+        for line in lines:
+            line = line.strip()
+            
+            # Skip empty lines at the beginning
+            if not line and not cleaned_lines:
+                continue
+                
+            # Check for document class
+            if '\\documentclass' in line:
+                has_documentclass = True
+            elif '\\begin{document}' in line:
+                in_document = True
+            elif '\\end{document}' in line:
+                in_document = False
+                cleaned_lines.append(line)
+                break  # Stop after end document
+            
+            # Skip lines that are clearly malformed
+            if (
+                line and not line.startswith('\\') and 
+                not in_document and 
+                re.search(r'^[a-zA-Z]+\s*\d*\s*$', line)
+            ):
+                iteration_changed = True
+                issues_found.append(f"Removed malformed line: {line}")
+                continue
+            
+            cleaned_lines.append(line)
+        
+        # Ensure minimal LaTeX structure if missing
+        if not has_documentclass:
+            cleaned_lines.insert(0, '\\documentclass{article}')
+            cleaned_lines.insert(1, '\\usepackage[letterpaper,margin=0.75in]{geometry}')
+            cleaned_lines.insert(2, '\\usepackage{enumitem}')
+            cleaned_lines.insert(3, '\\usepackage[colorlinks=true,linkcolor=black,urlcolor=blue]{hyperref}')
+            cleaned_lines.insert(4, '')
+            iteration_changed = True
+            issues_found.append("Added missing LaTeX preamble")
+        
+        tex = '\n'.join(cleaned_lines)
+        
+        if iteration_changed:
+            changed = True
+        else:
+            break  # No changes in this iteration, we're done
+    
+    # Final validation - check for unmatched braces
+    open_braces = tex.count('{')
+    close_braces = tex.count('}')
+    if open_braces != close_braces:
+        issues_found.append(f"Brace mismatch: {open_braces} open, {close_braces} close")
+        # Try to fix by adding missing braces
+        if open_braces > close_braces:
+            tex += '}' * (open_braces - close_braces)
+            changed = True
+            issues_found.append("Added missing closing braces")
+    
+    return tex, changed, issues_found
+
+def sanitize_preamble(tex: str) -> tuple[str, bool]:
+    """
+    Legacy function - now uses the comprehensive cleaning system
+    """
+    cleaned_tex, changed, issues = clean_latex_content(tex)
+    return cleaned_tex, changed
 
 # Simple in-memory storage for demo
 projects = {}
@@ -38,7 +175,7 @@ patches = {}
 # Initialize services
 template_service = TemplateService()
 compile_service = CompileService()
-parse_service = ParseService()
+parse_service = CleanParseService()
 
 # Load projects from file if it exists
 PROJECTS_FILE = "projects_backup.json"
@@ -172,9 +309,85 @@ def convert_to_latex_with_chat(text_content: str) -> str:
     # Use improved parsing approach that preserves formatting better
     print("🔧 DEBUG: Using improved parsing approach for better formatting preservation")
     
-    # Use SimpleParseService for better structure preservation
-    parse_service = SimpleParseService()
-    resume_data = parse_service.parse_resume_text(text_content)
+    # Use AI to parse the compressed text properly
+    print("🤖 DEBUG: Using AI to parse compressed text")
+    
+    # Create a clean, professional prompt for the AI to parse messy text
+    parse_prompt = f"""
+    Parse this resume text and extract structured data. Be precise and professional.
+
+    Text: {text_content}
+
+    Extract:
+    1. Personal info: name, email, phone, location, LinkedIn
+    2. Work experience: company, title, dates, location, descriptions
+    3. Education: school, degree, dates, GPA
+    4. Projects: name, technologies, dates, descriptions
+    5. Skills: all technical skills
+
+    Rules:
+    - Extract everything you can find
+    - Remove duplicates
+    - Use empty strings for missing data
+    - Be clean and professional
+
+    Return JSON:
+    {{
+        "basics": {{"name": "", "email": "", "phone": "", "location": "", "linkedin": ""}},
+        "experience": [{{"company": "", "title": "", "start_date": "", "end_date": "", "location": "", "description": []}}],
+        "education": [{{"school": "", "degree": "", "start_date": "", "end_date": "", "gpa": ""}}],
+        "projects": [{{"name": "", "tech_stack": "", "start_date": "", "description": []}}],
+        "skills": []
+    }}
+    """
+    
+    try:
+        # Use OpenAI to parse the text
+        print("🤖 DEBUG: Calling OpenAI API...")
+        response = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a professional resume parsing expert. Extract structured data from compressed resume text with high accuracy. Return clean, professional JSON with complete information extraction. Focus on clarity and precision."},
+                {"role": "user", "content": parse_prompt}
+            ],
+            temperature=0.1
+        )
+        
+        print(f"🤖 DEBUG: OpenAI response received: {len(response.choices[0].message.content)} characters")
+        
+        # Parse the JSON response
+        import json
+        ai_response = response.choices[0].message.content
+        print(f"🤖 DEBUG: AI response preview: {ai_response[:200]}...")
+        
+        # Clean the response (remove markdown code blocks if present)
+        if ai_response.startswith('```json'):
+            ai_response = ai_response[7:]  # Remove ```json
+        if ai_response.startswith('```'):
+            ai_response = ai_response[3:]  # Remove ```
+        if ai_response.endswith('```'):
+            ai_response = ai_response[:-3]  # Remove trailing ```
+        
+        ai_response = ai_response.strip()
+        print(f"🤖 DEBUG: Cleaned AI response preview: {ai_response[:200]}...")
+        
+        resume_data = json.loads(ai_response)
+        print(f"✅ DEBUG: AI parsed resume with {len(resume_data.get('experience', []))} experiences, {len(resume_data.get('education', []))} education entries")
+        
+    except json.JSONDecodeError as e:
+        print(f"⚠️ DEBUG: JSON parsing failed: {e}")
+        print(f"⚠️ DEBUG: AI response was: {ai_response[:500]}...")
+        # Fallback to CleanParseService
+        parse_service = CleanParseService()
+        resume_data = parse_service.parse_resume_text(text_content)
+        
+    except Exception as e:
+        print(f"⚠️ DEBUG: AI parsing failed, using fallback: {e}")
+        import traceback
+        traceback.print_exc()
+        # Fallback to CleanParseService
+        parse_service = CleanParseService()
+        resume_data = parse_service.parse_resume_text(text_content)
     
     # Generate LaTeX using TemplateService
     template_service = TemplateService()
@@ -183,46 +396,361 @@ def convert_to_latex_with_chat(text_content: str) -> str:
     print(f"📄 DEBUG: Generated LaTeX using improved parsing (length: {len(latex)})")
     print(f"📄 DEBUG: LaTeX preview: {latex[:200]}...")
     
+    # The template service already generates clean LaTeX, no need for additional formatting
+    
     return latex
 
+def format_resume_latex(resume_tex: str) -> str:
+    """Normalize LaTeX resume for professional layout and alignment.
+    - Ensures documentclass, geometry, hyperref, enumitem
+    - Centers name/header block
+    - Uses \section* with consistent spacing
+    - Itemize with leftmargin=*, tight spacing
+    - Removes excessive blank lines and fixes spacing
+    """
+    try:
+        if not resume_tex:
+            return resume_tex
+
+        import re
+
+        tex = resume_tex
+        # Ensure minimal preamble
+        if '\\documentclass' not in tex:
+            tex = ("\\documentclass{article}\n"
+                   "\\usepackage[letterpaper,margin=0.75in]{geometry}\n"
+                   "\\usepackage{enumitem}\n\\setlist[itemize]{leftmargin=*, itemsep=0.2em, topsep=0.2em}\n"
+                   "\\usepackage[colorlinks=true,linkcolor=black,urlcolor=blue]{hyperref}\n"
+                   "\\begin{document}\n\n" + tex)
+            if not tex.strip().endswith('\\end{document}'):
+                tex += "\n\\end{document}\n"
+
+        # Ensure required packages and enumitem options
+        if 'enumitem' not in tex:
+            tex = tex.replace('\\usepackage{hyperref}', '\\usepackage{enumitem}\n\\setlist[itemize]{leftmargin=*, itemsep=0.2em, topsep=0.2em}\n\\usepackage{hyperref}')
+        if '\\setlist[itemize]' not in tex:
+            tex = tex.replace('\\usepackage{enumitem}', '\\usepackage{enumitem}\n\\setlist[itemize]{leftmargin=*, itemsep=0.2em, topsep=0.2em}')
+
+        # Center the very first bold line (name) by wrapping with center if not already
+        lines = tex.split('\n')
+        try:
+            begin_doc_idx = next(i for i, l in enumerate(lines) if '\\begin{document}' in l)
+        except StopIteration:
+            begin_doc_idx = 0
+
+        # Find first meaningful line after begin{document}
+        for i in range(begin_doc_idx + 1, min(begin_doc_idx + 10, len(lines))):
+            if lines[i].strip() == '':
+                continue
+            # If not already centered, center block of first 1-3 lines (name + contact)
+            if '\\begin{center}' not in '\n'.join(lines[i:i+5]):
+                block = []
+                j = i
+                while j < len(lines) and j < i + 5 and lines[j].strip() != '':
+                    block.append(lines[j])
+                    j += 1
+                centered = ['\\begin{center}'] + block + ['\\end{center}', '']
+                lines = lines[:i] + centered + lines[j:]
+            break
+
+        tex = '\n'.join(lines)
+
+        # Normalize sections to \section*
+        tex = re.sub(r"\\section\s*\{([^}]+)\}", r"\\section*{\1}", tex)
+        # Ensure a blank line after each section header
+        tex = re.sub(r"(\\section\*\{[^}]+\})\s*", r"\1\n", tex)
+
+        # Tighten multiple blank lines
+        tex = re.sub(r"\n{3,}", "\n\n", tex)
+
+        # Ensure itemize environments are well-formed
+        tex = tex.replace('\\begin{itemize}', '\\begin{itemize}')  # idempotent, placeholder for future checks
+        tex = tex.replace('\\end{itemize}', '\\end{itemize}')
+
+        return tex
+    except Exception:
+        return resume_tex
+
 def validate_and_improve_changes(changes_data: list, resume_tex: str) -> list:
-    """Validate and improve changes to ensure multi-line deletions work correctly"""
-    lines = resume_tex.split('\n')
-    improved_changes = []
-    
-    for change in changes_data:
-        if change.get('type') == 'removal':
-            # Check if this is a single-line removal that should be multi-line
-            start_line = change.get('start_line', 1) - 1  # Convert to 0-indexed
-            content = change.get('content', '')
-            
-            # If it's a company name line, try to find the complete block
-            if '\\textbf{' in content and ('Capital' in content or 'Lab' in content or 'Solutions' in content):
-                # Find the complete experience block
-                end_line = find_experience_block_end(lines, start_line)
-                if end_line > start_line:
-                    # Reconstruct the complete content
-                    complete_content = '\n'.join(lines[start_line:end_line + 1])
-                    change['end_line'] = end_line + 1  # Convert back to 1-indexed
-                    change['content'] = complete_content
-                    print(f"🔧 DEBUG: Improved removal to multi-line: lines {start_line + 1}-{end_line + 1}")
-        
-        improved_changes.append(change)
-    
-    return improved_changes
+    """
+    Backstop: if a removal doesn't span the full experience block, expand it.
+    A block is: \textbf{Company} ... \end{itemize} (+ optional \vspace and blank lines).
+
+    IMPORTANT: Only expand structural removals (experience blocks).
+    Do NOT expand simple field changes (name, email, etc.)
+    """
+    lines = resume_tex.splitlines()
+    N = len(lines)
+    def expand_block(start0: int, end0: int) -> tuple[int, int]:
+        # move start up to nearest \textbf{...} or section header
+        s = start0
+        while s > 0 and not (lines[s].lstrip().startswith(r'\textbf{') or
+                             lines[s].lstrip().startswith(r'\section*{') or
+                             'Experience' in lines[s]):
+            s -= 1
+        # if we didn't land on a bold header, keep original
+        if not lines[s].lstrip().startswith(r'\textbf{'):
+            s = start0
+        # move end down through \end{itemize}, optional \vspace, and trailing blank
+        e = max(end0, s)
+        while e < N-1 and not lines[e].lstrip().startswith(r'\end{itemize}'):
+            e += 1
+        if e < N-1 and lines[e].lstrip().startswith(r'\end{itemize}'):
+            # include optional \vspace and one following blank line
+            if e+1 < N and re.match(r'^\s*\\vspace\{[^}]+\}\s*$', lines[e+1]):
+                e += 1
+            if e+1 < N and lines[e+1].strip() == '':
+                e += 1
+        return s, e
+
+    improved = []
+    for ch in (changes_data or []):
+        # Only expand removals, NOT replacements (replacements are often simple field changes)
+        if (ch.get('type') or ch.get('change_type')) == 'removal':
+            # 1-indexed → 0-indexed
+            s0 = max(0, (ch.get('start_line') or ch.get('startLine') or 1) - 1)
+            e0 = max(s0, (ch.get('end_line') or ch.get('endLine') or (s0+1)) - 1)
+            # if content shows only items or a partial block, expand
+            body = ch.get('content') or ''
+            looks_partial = ('\\item' in body and '\\textbf{' not in body) or ('\\textbf{' in body and '\\end{itemize}' not in body)
+            if looks_partial:
+                s, e = expand_block(s0, e0)
+                ch['start_line'] = s + 1
+                ch['end_line'] = e + 1
+                ch['content'] = '\n'.join(lines[s:e+1])
+                print(f"🔧 DEBUG: Expanded removal from lines {s0+1}-{e0+1} to {s+1}-{e+1}")
+        improved.append(ch)
+    return improved
 
 def find_experience_block_end(lines: list, start_line: int) -> int:
-    """Find the end of an experience block starting from start_line"""
-    # Look for the next \textbf{ or \section*{ or end of document
-    for i in range(start_line + 1, len(lines)):
-        line = lines[i].strip()
-        if (line.startswith('\\textbf{') and ('Capital' in line or 'Lab' in line or 'Solutions' in line)) or \
-           line.startswith('\\section*{') or \
-           line.startswith('\\end{document}'):
-            return i - 1
+    """Legacy helper: keep for other callers; ends at \end{itemize} (+ optional vspace/blank)."""
+    i = start_line
+    N = len(lines)
+    while i < N and not lines[i].lstrip().startswith(r'\end{itemize}'):
+        i += 1
+    if i < N and lines[i].lstrip().startswith(r'\end{itemize}'):
+        if i+1 < N and re.match(r'^\s*\\vspace\{[^}]+\}\s*$', lines[i+1]):
+            i += 1
+        if i+1 < N and lines[i+1].strip() == '':
+            i += 1
+    return min(i, N-1)
+
+def validate_change_scope(changes_data: list, instruction: str, resume_tex: str) -> list:
+    """
+    Simplified validation that trusts AI-generated changes more.
+    Only validates truly problematic cases.
+    """
+    if not changes_data:
+        return changes_data
+
+    instruction_lower = instruction.lower()
+
+    print(f"🔧 DEBUG: Validating {len(changes_data)} changes for instruction: '{instruction[:50]}...'")
+
+    # Check if this is a removal/deletion request - these should allow structural changes
+    is_removal_request = any(keyword in instruction_lower for keyword in ['remove', 'delete', 'take out', 'get rid of'])
+
+    if is_removal_request:
+        print(f"✅ DEBUG: Removal request detected - allowing structural changes")
+        return changes_data
+
+    # Check if this is an addition request - these should also allow structural changes
+    is_addition_request = any(keyword in instruction_lower for keyword in ['add', 'insert', 'include', 'put in'])
+
+    if is_addition_request:
+        print(f"✅ DEBUG: Addition request detected - allowing structural changes")
+        return changes_data
+
+    # Only for simple single-field changes (name, email, phone), validate scope
+    simple_field_keywords = ['name', 'email', 'phone']
+    is_simple_field = any(word in instruction_lower for word in simple_field_keywords)
+
+    if is_simple_field:
+        print(f"🔧 DEBUG: Simple field change detected - validating scope")
+
+        # Allow changes from AI, but warn if they seem too broad
+        valid_changes = []
+        for change in changes_data:
+            start_line = change.get('start_line', 1)
+            end_line = change.get('end_line', 1)
+            span = end_line - start_line + 1
+
+            # Allow changes up to 10 lines (most simple changes should be 1-3 lines)
+            if span > 10:
+                print(f"⚠️ DEBUG: Change spans {span} lines which seems broad for a simple field change")
+                print(f"⚠️ DEBUG: But trusting AI and allowing it anyway")
+
+            valid_changes.append(change)
+
+        return valid_changes
+
+    # For all other cases, trust the AI completely
+    print(f"✅ DEBUG: Trusting AI-generated changes")
+    return changes_data
+
+def apply_changes_to_latex(latex_content: str, changes: list) -> str:
+    """Apply changes directly to LaTeX content with comprehensive validation"""
+    if not changes or not latex_content:
+        return latex_content
     
-    # If not found, return the last line
-    return len(lines) - 1
+    # First, clean the original content
+    print(f"🔧 DEBUG: Cleaning original LaTeX content before applying changes")
+    latex_content, was_cleaned, initial_issues = clean_latex_content(latex_content)
+    
+    if was_cleaned:
+        print(f"🔧 DEBUG: Fixed {len(initial_issues)} initial issues in LaTeX")
+        for issue in initial_issues[:3]:  # Show first 3 issues
+            print(f"   - {issue}")
+    
+    lines = latex_content.split('\n')
+    
+    # Group changes by line number and handle them together
+    changes_by_line = {}
+    for change in changes:
+        # Handle both dict and Pydantic Change objects
+        if hasattr(change, 'start_line'):
+            start_line = change.start_line - 1  # Convert to 0-indexed
+        else:
+            start_line = change.get('start_line', 1) - 1  # Convert to 0-indexed
+        if start_line not in changes_by_line:
+            changes_by_line[start_line] = []
+        changes_by_line[start_line].append(change)
+    
+    # Process changes line by line in descending order
+    for line_num in sorted(changes_by_line.keys(), reverse=True):
+        line_changes = changes_by_line[line_num]
+        
+        # Handle removals first, then additions/replacements
+        removals = [c for c in line_changes if (hasattr(c, 'type') and c.type == 'removal') or (hasattr(c, 'get') and c.get('type') == 'removal')]
+        additions = [c for c in line_changes if (hasattr(c, 'type') and c.type == 'addition') or (hasattr(c, 'get') and c.get('type') == 'addition')]
+        replacements = [c for c in line_changes if (hasattr(c, 'type') and c.type == 'replacement') or (hasattr(c, 'get') and c.get('type') == 'replacement')]
+        
+        print(f"🔧 DEBUG: Processing line {line_num + 1}: {len(removals)} removals, {len(additions)} additions, {len(replacements)} replacements")
+        
+        # Apply removals first
+        for change in removals:
+            if hasattr(change, 'end_line'):
+                end_line = change.end_line - 1
+            elif hasattr(change, 'get'):
+                end_line = change.get('end_line', line_num + 1) - 1
+            else:
+                end_line = line_num
+            print(f"🔧 DEBUG: Removing lines {line_num + 1}-{end_line + 1}")
+            lines = lines[:line_num] + lines[end_line + 1:]
+        
+        # Apply additions/replacements with validation
+        for change in additions + replacements:
+            if hasattr(change, 'content'):
+                content = change.content
+            elif hasattr(change, 'get'):
+                content = change.get('content', '')
+            else:
+                content = ''
+            
+            # Clean the content before applying it
+            content, content_cleaned, content_issues = clean_latex_content(content)
+            if content_cleaned:
+                print(f"🔧 DEBUG: Cleaned change content: {len(content_issues)} issues fixed")
+            
+            # Determine if this is a replacement (same start and end line)
+            if hasattr(change, 'end_line'):
+                end_line = change.end_line - 1
+            elif hasattr(change, 'get'):
+                end_line = change.get('end_line', line_num + 1) - 1
+            else:
+                end_line = line_num
+            
+            new_lines = content.split('\n')
+            
+            # If it's a single-line replacement (start_line == end_line), replace that line
+            if line_num == end_line:
+                print(f"🔧 DEBUG: Replacing single line {line_num + 1} with: {content[:50]}...")
+                if line_num < len(lines):
+                    lines[line_num] = content
+                else:
+                    lines.append(content)
+            else:
+                # Multi-line replacement or addition
+                print(f"🔧 DEBUG: Adding content at line {line_num + 1}")
+                lines = lines[:line_num] + new_lines + lines[line_num:]
+    
+    # Final comprehensive cleaning pass
+    result = '\n'.join(lines)
+    result, final_cleaned, final_issues = clean_latex_content(result)
+    
+    if final_cleaned:
+        print(f"🔧 DEBUG: Final cleaning pass fixed {len(final_issues)} issues")
+        for issue in final_issues[:3]:  # Show first 3 issues
+            print(f"   - {issue}")
+    
+    return result
+
+def fix_compilation_errors(latex_content: str, original_request: str, project_id: str, max_attempts: int = 3) -> str:
+    """Fix LaTeX compilation errors by sending failed code back to AI"""
+    if not latex_content:
+        return latex_content
+    
+    for attempt in range(max_attempts):
+        print(f"🔧 DEBUG: Testing compilation (attempt {attempt + 1}/{max_attempts})")
+        
+        # Test compilation
+        success, pdf_path, error_msg = compile_service.compile_latex(latex_content, f"{project_id}_test")
+        
+        if success:
+            print(f"✅ DEBUG: LaTeX compiles successfully")
+            return latex_content
+        
+        print(f"❌ DEBUG: Compilation failed: {error_msg}")
+        
+        if attempt < max_attempts - 1:
+            # Send error back to AI for fixing
+            try:
+                print(f"🤖 DEBUG: Sending compilation error to AI for fixing...")
+        
+                client = openai.OpenAI(api_key=openai.api_key)
+                fix_prompt = f"""The LaTeX code I generated has compilation errors. Please fix it.
+
+Original request: {original_request}
+
+Current LaTeX code:
+{latex_content}
+
+Compilation error: {error_msg}
+
+Please provide the corrected LaTeX code that will compile without errors. Return only the LaTeX code, no explanations."""
+                
+                response = client.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": "You are a LaTeX expert. Fix compilation errors and return clean, working LaTeX code."},
+                        {"role": "user", "content": fix_prompt}
+                    ],
+                    max_tokens=2000,
+                    temperature=0.1
+                )
+                
+                fixed_latex = response.choices[0].message.content.strip()
+                
+                # Clean up the response (remove markdown code blocks if present)
+                if fixed_latex.startswith('```latex'):
+                    fixed_latex = fixed_latex[8:]
+                if fixed_latex.startswith('```'):
+                    fixed_latex = fixed_latex[3:]
+                if fixed_latex.endswith('```'):
+                    fixed_latex = fixed_latex[:-3]
+                fixed_latex = fixed_latex.strip()
+                
+                print(f"🔧 DEBUG: AI provided fixed LaTeX (length: {len(fixed_latex)})")
+                latex_content = fixed_latex
+                
+            except Exception as e:
+                print(f"❌ DEBUG: AI fix attempt failed: {e}")
+                break
+        else:
+            print(f"❌ DEBUG: Max attempts reached, returning original content")
+            break
+    
+    return latex_content
 
 def clean_text_content(text_content: str) -> str:
     """Clean and normalize text content to remove unwanted characters and sequences"""
@@ -263,16 +791,17 @@ def clean_text_content(text_content: str) -> str:
     
     return text_content.strip()
 
-def _parse_experience_line_improved(line: str, experience: list, current_item: dict):
-    """Parse experience section with improved logic"""
-    line = line.strip()
-    if not line:
-        return current_item
+# Removed problematic function - using AI parsing instead
+# def _parse_experience_line_improved_removed(line: str, experience: list, current_item: dict):
+#     """Parse experience section with improved logic"""
+#     line = line.strip()
+#     if not line:
+#         return current_item
         
     # Check if this is a bullet point
     if line.startswith("•") or line.startswith("-") or line.startswith("*"):
         if current_item and "bullets" in current_item:
-            current_item["bullets"].append(line[1:].strip())
+                        current_item["bullets"].append(line[1:].strip())
         return current_item
     
     # Check if this looks like a job title (usually shorter, contains keywords)
@@ -316,8 +845,8 @@ def convert_to_latex_fallback(text_content: str) -> str:
     """Fallback conversion using improved parsing to preserve formatting"""
     print("🔧 DEBUG: Using improved fallback template conversion")
     
-    # Use SimpleParseService for better parsing
-    parse_service = SimpleParseService()
+    # Use CleanParseService for parsing (preserve full content with correct sections)
+    parse_service = CleanParseService()
     resume_data = parse_service.parse_resume_text(text_content)
     
     # Generate LaTeX using TemplateService
@@ -568,54 +1097,83 @@ def generate_patch(request: PatchRequest):
         print("🤖 DEBUG: Using OpenAI for patch generation")
         try:
             # Use OpenAI to generate real patches
-            system_prompt = """You are a LaTeX resume expert. Generate specific changes to improve a resume based on the user's instruction.
+            system_prompt = """You are a LaTeX resume expert. Generate specific, targeted changes to improve a resume based on the user's instruction.
 
-IMPORTANT: When deleting experience entries, projects, or education entries, you MUST delete the ENTIRE multi-line block, not just single lines.
+CRITICAL RULES FOR GENERATING CHANGES:
+1. BE PRECISE AND MINIMAL: Only change what the user explicitly requests
+2. For simple edits (name, email, phone, dates), create single-line replacements (start_line = end_line)
+3. For content additions, add new bullet points or sections without removing existing content
+4. For content improvements, enhance existing text while preserving structure
+5. NEVER generate changes that span more than 3-5 lines unless explicitly removing large blocks
+6. When adding content, use type='addition' and insert at appropriate locations
+7. When replacing content, use type='replacement' with exact line ranges
+8. When removing content, use type='removal' only when explicitly requested
 
-For experience entries, this includes:
-- The \\textbf{Company Name} line
-- The \\textit{date} line  
-- The \\begin{itemize} block
-- All \\item entries inside
-- The \\end{itemize} line
-- Any empty lines after
+SPECIAL HANDLING FOR NAME CHANGES:
+- Look for \\textbf{Current Name} patterns in the LaTeX
+- Replace ONLY the name inside the braces
+- Keep the \\textbf{} command intact
+- Always generate a change for name replacement requests
 
-Return your response as a JSON array of changes, where each change has:
-- id: unique identifier
-- type: "addition" or "removal" 
-- start_line: line number where change starts
-- end_line: line number where change ends (for multi-line deletions, this should be the last line of the block)
-- content: the actual LaTeX content to add/remove (for multi-line, include all lines separated by \\n)
-- pdf_regions: [{"x": 50, "y": 200, "width": 400, "height": 60}] for visual positioning
+EXAMPLE PATTERNS:
 
-Example for deleting an experience entry:
-[
-  {
-    "id": "change1",
-    "type": "removal",
-    "start_line": 15,
-    "end_line": 25,
-    "content": "\\textbf{Company Name} --- Role |Location\\n\\textit{Date Range}\\n\\begin{itemize}\\n\\item Achievement 1\\n\\item Achievement 2\\n\\end{itemize}\\n",
-    "pdf_regions": [{"x": 50, "y": 200, "width": 400, "height": 200}]
-  }
-]
+Name change (ALWAYS generate this for name requests):
+[{
+  "id": "name_change",
+  "type": "replacement",
+  "start_line": 8,
+  "end_line": 8,
+  "content": "\\textbf{Jennifer Adams}",
+  "pdf_regions": [{"x": 50, "y": 100, "width": 400, "height": 30}]
+}]
 
-Example for single line addition:
-[
-  {
-    "id": "change1",
-    "type": "addition", 
-    "start_line": 12,
-    "end_line": 12,
-    "content": "\\item New bullet point with quantified impact",
-    "pdf_regions": [{"x": 50, "y": 200, "width": 400, "height": 60}]
-  }
-]"""
+Email change:
+[{
+  "id": "email_change",
+  "type": "replacement",
+  "start_line": 9,
+  "end_line": 9,
+  "content": "Email: jennifer.adams@email.com | Phone: (555) 123-4567",
+  "pdf_regions": [{"x": 50, "y": 120, "width": 400, "height": 20}]
+}]
+
+Add new bullet point:
+[{
+  "id": "bullet_addition", 
+  "type": "addition",
+  "start_line": 25,
+  "end_line": 25,
+  "content": "\\item Implemented new feature that increased efficiency by 20%",
+  "pdf_regions": [{"x": 70, "y": 350, "width": 450, "height": 20}]
+}]
+
+Improve existing bullet point:
+[{
+  "id": "bullet_improvement",
+  "type": "replacement", 
+  "start_line": 23,
+  "end_line": 23,
+  "content": "\\item Enhanced system architecture resulting in 40% performance improvement and $50K cost savings",
+  "pdf_regions": [{"x": 70, "y": 330, "width": 450, "height": 20}]
+}]
+
+IMPORTANT: 
+- Always return valid JSON array
+- Each change must have all required fields: id, type, start_line, end_line, content, pdf_regions
+- For name changes, ALWAYS generate at least one change - never return empty array
+- Look carefully at the LaTeX to find the correct line numbers"""
 
             user_prompt = f"""Instruction: {request.instruction}
 
 Current LaTeX content:
 {project.get('resume_tex', 'No content available')}
+
+IMPORTANT: 
+- If the instruction is to change a name, only modify the \\textbf{{Name}} line
+- If the instruction is to change contact info, only modify the contact line
+- If the instruction is to remove a specific company/project/school, then delete the entire block
+- Make MINIMAL changes - don't delete more than necessary
+- Focus on the specific request, not making broad changes
 
 Generate specific changes to implement this instruction."""
 
@@ -645,6 +1203,9 @@ Generate specific changes to implement this instruction."""
                 
                 # Validate and improve multi-line deletions
                 changes_data = validate_and_improve_changes(changes_data, project.get('resume_tex', ''))
+                
+                # Additional validation to prevent overly broad changes
+                changes_data = validate_change_scope(changes_data, request.instruction, project.get('resume_tex', ''))
                 
                 mock_changes = [Change(**change) for change in changes_data]
             except Exception as parse_error:
@@ -676,188 +1237,181 @@ Generate specific changes to implement this instruction."""
 
 @app.post("/llm/chat")
 def chat_with_agent(request: dict):
-    """Chat with the AI resume agent"""
+    """Improved chat with direct LaTeX updates - simpler and more reliable"""
     try:
         message = request.get('message', '')
         chat_history = request.get('chat_history', [])
-        current_resume = request.get('current_resume')
+        current_resume = request.get('current_resume', '')
         context = request.get('context', {})
-        
+
         print(f"🤖 DEBUG: Chat request: {message[:100]}...")
         print(f"📚 DEBUG: Chat history length: {len(chat_history)}")
-        print(f"📄 DEBUG: Has current resume: {bool(current_resume)}")
-        
+        print(f"📄 DEBUG: Current resume length: {len(current_resume) if current_resume else 0}")
+
         if not openai.api_key:
             raise HTTPException(status_code=500, detail="OpenAI API key is required")
-        
-        # Build conversation context
-        system_prompt = """You are an expert AI resume assistant. You help users build, improve, and customize their resumes.
 
-Key capabilities:
-- Build resumes from scratch
-- Improve existing resumes
-- Adjust resume length (1-page, 2-page, etc.)
-- Optimize for specific job roles
-- Fix formatting and content issues
-- Provide career advice
+        # Enhanced system prompt for better resume editing
+        system_prompt = """You are an expert AI resume editor and career advisor. You help users create, edit, and perfect their resumes through natural conversation.
 
-Guidelines:
-- Always maintain a helpful, professional tone
-- Ask clarifying questions when needed
-- If user wants a 1-page resume, ensure content fits
-- If content is too long, suggest what to remove or condense
-- Provide specific, actionable advice
-- When updating resume, return structured data
+CORE CAPABILITIES:
+✓ Instant resume edits - change names, contact info, dates, descriptions
+✓ Content optimization - improve bullet points with metrics and impact
+✓ Structure management - add/remove/reorganize sections
+✓ Length optimization - fit to 1-page, 2-page, or custom length
+✓ ATS optimization - ensure compatibility with applicant tracking systems
+✓ Role targeting - tailor resumes for specific job positions
 
-Formatting and writing quality:
-- Prefer concise, high-impact bullet points that start with strong verbs
-- Where possible, include metrics (%, x, time saved) and outcomes
-- Avoid first person; keep bullets single-line if possible
-- No run-on sentences; avoid clumsy wording
-- Keep sections clearly separated: Education, Work Experience, Projects, Skills
-- Do NOT left-align everything; assume a standard LaTeX article with clear sections and itemized bullets
+EDITING PHILOSOPHY:
+- Make changes immediately when user gives clear instructions
+- Be conversational and natural, not robotic
+- Provide brief explanations of changes made
+- Suggest improvements proactively when you see opportunities
+- Ask clarifying questions only when truly necessary
 
-When user asks for resume changes, respond with:
-- Clear explanation of what you're doing
-- Specific changes made
-- Any recommendations
-- Ask if they want further adjustments
+WHEN USER WANTS TO EDIT (name, email, dates, content, etc.):
+1. If you have the current LaTeX resume, make the edit directly
+2. Return the complete updated LaTeX in your response
+3. Use this JSON format in your response:
+   ```json
+   {
+     "action": "update_resume",
+     "updated_latex": "complete updated LaTeX here",
+     "explanation": "brief explanation of what changed"
+   }
+   ```
 
-Remember: You're having a conversation, so be natural and engaging."""
+WHEN USER ASKS QUESTIONS OR WANTS ADVICE:
+- Provide helpful, actionable advice
+- Reference specific parts of their resume if available
+- No JSON response needed for pure conversation
 
-        # Build messages for OpenAI
+LATEX EDITING RULES:
+- Preserve document structure and formatting
+- Maintain professional ATS-friendly layout
+- Use strong action verbs and quantifiable metrics
+- Keep bullet points concise (1-2 lines max)
+- Ensure proper LaTeX syntax (matched braces, valid commands)
+
+EXAMPLE INTERACTIONS:
+
+User: "Change my name to Jennifer Adams"
+Assistant: I've updated your name to Jennifer Adams.
+```json
+{
+  "action": "update_resume",
+  "updated_latex": "\\documentclass{article}...\n\\begin{center}\n\\textbf{Jennifer Adams}\n...",
+  "explanation": "Updated name from previous name to Jennifer Adams"
+}
+```
+
+User: "Make this a 1-page resume"
+Assistant: I'll condense your resume to fit on one page by removing older experiences and tightening descriptions.
+```json
+{
+  "action": "update_resume",
+  "updated_latex": "condensed LaTeX content...",
+  "explanation": "Condensed to 1 page by removing 2 older positions and shortening bullet points"
+}
+```
+
+User: "What should I emphasize for a software engineering role?"
+Assistant: For software engineering roles, emphasize: technical skills (languages, frameworks), quantifiable achievements (performance improvements, scale), system design experience, and collaborative projects. Your current experience with distributed systems and API development would be great to highlight.
+
+Remember: You're having a natural conversation. Be helpful, concise, and proactive!"""
+
+        # Build messages with resume context
         messages = [{"role": "system", "content": system_prompt}]
-        
-        # Add chat history
-        for msg in chat_history[-10:]:  # Keep last 10 messages for context
+
+        # Add resume context if available
+        if current_resume and len(current_resume) > 0:
+            context_msg = f"Current resume LaTeX:\n```latex\n{current_resume}\n```"
+            messages.append({"role": "system", "content": context_msg})
+
+        # Add chat history (last 6 messages for context)
+        for msg in chat_history[-6:]:
             messages.append({
                 "role": msg.get('role', 'user'),
                 "content": msg.get('content', '')
             })
-        
+
         # Add current message
         messages.append({"role": "user", "content": message})
-        
-        print(f"📤 DEBUG: Sending to OpenAI with {len(messages)} messages")
-        
+
+        print(f"📤 DEBUG: Sending to OpenAI GPT-4 with {len(messages)} messages")
+
+        # Use GPT-4 for better understanding and editing
         client = openai.OpenAI(api_key=openai.api_key)
         response = client.chat.completions.create(
             model="gpt-4",
             messages=messages,
-            max_tokens=1000,
-            temperature=0.7
+            max_tokens=2500,
+            temperature=0.3  # Lower temperature for more consistent edits
         )
-        
+
         ai_response = response.choices[0].message.content
-        print(f"📥 DEBUG: Received response: {ai_response[:200]}...")
-        
-        # Check if this is a resume update request
+        print(f"📥 DEBUG: Received response ({len(ai_response)} chars)")
+
+        # Parse AI response for LaTeX updates
         is_resume_update = False
         resume_data = None
-        
-        # Simple heuristics to detect resume update or formatting requests
-        lowered = message.lower()
-        update_keywords = ['update', 'change', 'modify', 'add', 'remove', 'delete', 'improve', 'fix']
-        format_keywords = ['format', 'formatting', 'make it one page', 'one page', 'polish', 'align', 'layout', 'clean up', 'make it professional', 'reformat', 'structure']
+        explanation = ""
 
-        def _looks_like_latex(text: str) -> bool:
-            if not isinstance(text, str):
-                return False
-            return ('\\begin{document}' in text) or ('\\section*{' in text) or ('\\textbf{' in text)
+        # Check if AI returned JSON with updated LaTeX
+        try:
+            # Look for JSON code block in response
+            import re
+            json_match = re.search(r'```json\s*(\{.*?\})\s*```', ai_response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+                update_data = json.loads(json_str)
 
-        def format_resume_latex(resume_tex: str) -> str:
-            """Normalize LaTeX resume for professional layout and alignment.
-            - Ensures documentclass, geometry, hyperref, enumitem
-            - Centers name/header block
-            - Uses \section* with consistent spacing
-            - Itemize with leftmargin=*, tight spacing
-            - Removes excessive blank lines and fixes spacing
-            """
-            try:
-                if not resume_tex:
-                    return resume_tex
+                if update_data.get('action') == 'update_resume' and update_data.get('updated_latex'):
+                    is_resume_update = True
+                    resume_data = update_data['updated_latex']
+                    explanation = update_data.get('explanation', '')
 
-                import re
+                    # Clean and validate the LaTeX
+                    resume_data, was_cleaned, issues = clean_latex_content(resume_data)
+                    if was_cleaned:
+                        print(f"🧹 DEBUG: Cleaned AI-generated LaTeX ({len(issues)} issues fixed)")
 
-                tex = resume_tex
-                # Ensure minimal preamble
-                if '\\documentclass' not in tex:
-                    tex = ("\\documentclass{article}\n"
-                           "\\usepackage[letterpaper,margin=0.75in]{geometry}\n"
-                           "\\usepackage{enumitem}\n\\setlist[itemize]{leftmargin=*, itemsep=0.2em, topsep=0.2em}\n"
-                           "\\usepackage[colorlinks=true,linkcolor=black,urlcolor=blue]{hyperref}\n"
-                           "\\begin{document}\n\n" + tex)
-                    if not tex.strip().endswith('\\end{document}'):
-                        tex += "\n\\end{document}\n"
+                    # Test compilation and fix errors
+                    project_id = context.get('project_id', 'default')
+                    resume_data = fix_compilation_errors(resume_data, message, project_id)
 
-                # Ensure required packages and enumitem options
-                if 'enumitem' not in tex:
-                    tex = tex.replace('\\usepackage{hyperref}', '\\usepackage{enumitem}\n\\setlist[itemize]{leftmargin=*, itemsep=0.2em, topsep=0.2em}\n\\usepackage{hyperref}')
-                if '\\setlist[itemize]' not in tex:
-                    tex = tex.replace('\\usepackage{enumitem}', '\\usepackage{enumitem}\n\\setlist[itemize]{leftmargin=*, itemsep=0.2em, topsep=0.2em}')
+                    # Update project in backend
+                    if project_id not in projects:
+                        projects[project_id] = {
+                            'id': project_id,
+                            'resume_tex': resume_data,
+                            'created_at': datetime.now().isoformat()
+                        }
+                    else:
+                        projects[project_id]['resume_tex'] = resume_data
 
-                # Center the very first bold line (name) by wrapping with center if not already
-                lines = tex.split('\n')
-                try:
-                    begin_doc_idx = next(i for i, l in enumerate(lines) if '\\begin{document}' in l)
-                except StopIteration:
-                    begin_doc_idx = 0
+                    save_projects()
+                    print(f"✅ DEBUG: Resume updated via direct AI edit")
+        except json.JSONDecodeError as e:
+            print(f"⚠️ DEBUG: No JSON update found in response: {e}")
+        except Exception as e:
+            print(f"⚠️ DEBUG: Error parsing AI response: {e}")
 
-                # Find first meaningful line after begin{document}
-                for i in range(begin_doc_idx + 1, min(begin_doc_idx + 10, len(lines))):
-                    if lines[i].strip() == '':
-                        continue
-                    # If not already centered, center block of first 1-3 lines (name + contact)
-                    if '\\begin{center}' not in '\n'.join(lines[i:i+5]):
-                        block = []
-                        j = i
-                        while j < len(lines) and j < i + 5 and lines[j].strip() != '':
-                            block.append(lines[j])
-                            j += 1
-                        centered = ['\\begin{center}'] + block + ['\\end{center}', '']
-                        lines = lines[:i] + centered + lines[j:]
-                    break
+        # Extract clean response text (remove JSON block)
+        response_text = re.sub(r'```json\s*\{.*?\}\s*```', '', ai_response, flags=re.DOTALL).strip()
 
-                tex = '\n'.join(lines)
-
-                # Normalize sections to \section*
-                tex = re.sub(r"\\section\s*\{([^}]+)\}", r"\\section*{\1}", tex)
-                # Ensure a blank line after each section header
-                tex = re.sub(r"(\\section\*\{[^}]+\})\s*", r"\1\n", tex)
-
-                # Tighten multiple blank lines
-                tex = re.sub(r"\n{3,}", "\n\n", tex)
-
-                # Ensure itemize environments are well-formed
-                tex = tex.replace('\\begin{itemize}', '\\begin{itemize}')  # idempotent, placeholder for future checks
-                tex = tex.replace('\\end{itemize}', '\\end{itemize}')
-
-                return tex
-            except Exception:
-                return resume_tex
-
-        if any(k in lowered for k in format_keywords):
-            # Formatting intent detected
-            source = current_resume if _looks_like_latex(current_resume or '') else ai_response
-            if _looks_like_latex(source):
-                formatted = format_resume_latex(source)
-                is_resume_update = True
-                resume_data = formatted
-
-        if resume_data is None and any(keyword in lowered for keyword in update_keywords):
-            is_resume_update = True
-            # Default behavior: pass through current resume; frontend may apply targeted patches
-            resume_data = current_resume
-        
         return {
-            "response": ai_response,
+            "response": response_text,
             "is_resume_update": is_resume_update,
             "resume_data": resume_data,
+            "explanation": explanation,
             "timestamp": datetime.now().isoformat()
         }
-        
+
     except Exception as e:
         print(f"❌ ERROR: Chat failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
 
 @app.post("/changes/apply")
@@ -940,11 +1494,89 @@ async def get_pdf(project_id: str, t: Optional[str] = None):
         if not latex_content:
             raise HTTPException(status_code=400, detail="No LaTeX content found for project")
         
+        # Comprehensive LaTeX cleaning and validation
+        print(f"🧹 DEBUG: Starting comprehensive LaTeX cleaning")
+        original_length = len(latex_content)
+        latex_content, was_cleaned, issues_found = clean_latex_content(latex_content)
+        
+        if was_cleaned:
+            project["resume_tex"] = latex_content
+            print(f"🧹 DEBUG: LaTeX cleaned successfully - {len(issues_found)} issues fixed")
+            print(f"   Length changed: {original_length} -> {len(latex_content)} chars")
+            for issue in issues_found[:5]:  # Show first 5 issues
+                print(f"   - {issue}")
+        else:
+            print(f"✅ DEBUG: LaTeX content is already clean")
+        
         print(f"✅ DEBUG: Found project, compiling LaTeX to PDF")
         print(f"📄 DEBUG: LaTeX content length: {len(latex_content)}")
         
         # Use compile service to generate PDF
         success, pdf_path, error_msg = compile_service.compile_latex(latex_content, project_id)
+        
+        # If compilation fails due to LaTeX errors, try regenerating with OpenAI
+        if not success and error_msg and any(keyword in error_msg.lower() for keyword in ['undefined', 'missing', 'error', 'ewcommand']):
+            print(f"⚠️ DEBUG: PDF compilation failed with LaTeX errors, attempting AI-powered recovery")
+            print(f"   Error: {error_msg[:200]}...")
+            
+            try:
+                # Use OpenAI to fix the LaTeX
+                client = openai.OpenAI(api_key=openai.api_key)
+                fix_prompt = f"""The following LaTeX code has compilation errors. Please fix it and return clean, valid LaTeX that will compile without errors.
+
+Errors encountered: {error_msg}
+
+LaTeX code to fix:
+{latex_content}
+
+Rules:
+1. Return only valid LaTeX code
+2. Remove any broken commands like 'ewcommand' without backslash
+3. Ensure all braces are properly matched
+4. Keep the content structure intact
+5. Use standard LaTeX packages only"""
+                
+                response = client.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": "You are a LaTeX expert. Fix broken LaTeX code and return clean, compilable LaTeX."},
+                        {"role": "user", "content": fix_prompt}
+                    ],
+                    max_tokens=3000,
+                    temperature=0.1
+                )
+                
+                fixed_latex = response.choices[0].message.content.strip()
+                
+                # Clean up the AI response
+                if fixed_latex.startswith('```latex'):
+                    fixed_latex = fixed_latex[8:]
+                elif fixed_latex.startswith('```'):
+                    fixed_latex = fixed_latex[3:]
+                if fixed_latex.endswith('```'):
+                    fixed_latex = fixed_latex[:-3]
+                fixed_latex = fixed_latex.strip()
+                
+                # Apply comprehensive cleaning to AI-fixed content
+                fixed_latex, ai_cleaned, ai_issues = clean_latex_content(fixed_latex)
+                
+                print(f"🤖 DEBUG: AI fixed LaTeX, attempting recompilation")
+                print(f"   AI fixes: {len(ai_issues)} additional issues resolved")
+                
+                # Update project with fixed content
+                project["resume_tex"] = fixed_latex
+                latex_content = fixed_latex
+                
+                # Retry compilation
+                success, pdf_path, error_msg = compile_service.compile_latex(latex_content, project_id)
+                
+                if success:
+                    print(f"✅ DEBUG: AI-powered recovery successful!")
+                else:
+                    print(f"❌ DEBUG: AI-powered recovery failed: {error_msg[:200]}...")
+                    
+            except Exception as e:
+                print(f"❌ DEBUG: AI-powered recovery error: {e}")
         
         if success and pdf_path and os.path.exists(pdf_path):
             print(f"✅ DEBUG: PDF generated successfully at {pdf_path}")

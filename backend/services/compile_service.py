@@ -69,30 +69,32 @@ class CompileService:
                     os.unlink(pdf_path)
                 
                 # Run compiler with timeout
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,  # 30 second timeout
-                    cwd=os.path.dirname(tex_file_path)
-                )
-                
-                print(f"🔧 DEBUG: {compiler_name} finished with return code: {result.returncode}")
-                
-                if result.returncode == 0 and os.path.exists(pdf_path):
-                    print(f"✅ DEBUG: PDF generated successfully with {compiler_name}")
-                    return True, pdf_path, ""
-                else:
-                    print(f"⚠️ DEBUG: {compiler_name} failed")
-                    print(f"🔧 DEBUG: stdout: {result.stdout[:500]}")
-                    print(f"🔧 DEBUG: stderr: {result.stderr[:500]}")
+                try:
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,  # 30 second timeout
+                        cwd=os.path.dirname(tex_file_path)
+                    )
                     
+                    print(f"🔧 DEBUG: {compiler_name} finished with return code: {result.returncode}")
+                    
+                    if result.returncode == 0 and os.path.exists(pdf_path):
+                        print(f"✅ DEBUG: PDF generated successfully with {compiler_name}")
+                        return True, pdf_path, ""
+                    else:
+                        print(f"⚠️ DEBUG: {compiler_name} failed")
+                        print(f"🔧 DEBUG: stdout: {result.stdout[:500]}")
+                        print(f"🔧 DEBUG: stderr: {result.stderr[:500]}")
+                
+                except subprocess.TimeoutExpired:
+                    print(f"⚠️ DEBUG: {compiler_name} timed out after 30 seconds")
+                except Exception as e:
+                    print(f"⚠️ DEBUG: {compiler_name} error: {e}")
                     # Clean up auxiliary files from failed compilation
                     self._cleanup_aux_files(tex_file_path)
                     
-            except subprocess.TimeoutExpired:
-                print(f"⏰ DEBUG: {compiler_name} timed out")
-                continue
             except Exception as e:
                 print(f"💥 DEBUG: {compiler_name} error: {str(e)}")
                 continue

@@ -1,18 +1,17 @@
 import { Button } from '@/components/ui/button';
 import { FileText, Eye } from 'lucide-react';
-import { Change } from './ResumeEditor';
 import LaTeXEditor from './LaTeXEditor';
 import { PDFViewer } from './PDFViewer';
 
 interface WorkspaceProps {
   activeTab: 'pdf' | 'latex';
   onTabChange: (tab: 'pdf' | 'latex') => void;
-  changes: Change[];
-  onChangeAccept: (changeId: string, accepted: boolean) => void;
   project?: any;
+  onLatexChange?: (content: string) => void;
+  changes?: any[];
 }
 
-export const Workspace = ({ activeTab, onTabChange, changes, onChangeAccept, project }: WorkspaceProps) => {
+export const Workspace = ({ activeTab, onTabChange, project, onLatexChange, changes = [] }: WorkspaceProps) => {
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
       {/* Tab Bar */}
@@ -47,12 +46,16 @@ export const Workspace = ({ activeTab, onTabChange, changes, onChangeAccept, pro
 
       {/* Content */}
       <div className="flex-1 min-h-0 overflow-hidden">
-        <div className="h-full transition-all duration-300 ease-in-out">
-          {activeTab === 'pdf' ? (
-            <PDFViewer project={project} />
-          ) : (
-            <LaTeXEditor changes={changes} />
-          )}
+        {/* Keep both views mounted to maintain event listeners */}
+        <div className={`h-full ${activeTab === 'pdf' ? 'block' : 'hidden'}`}>
+          <PDFViewer project={project} />
+        </div>
+        <div className={`h-full ${activeTab === 'latex' ? 'block' : 'hidden'}`}>
+          <LaTeXEditor
+            content={project?.resume_tex || ''}
+            onContentChange={onLatexChange}
+            changes={changes}
+          />
         </div>
       </div>
     </div>
