@@ -15,33 +15,27 @@ export const Workspace = ({ activeTab, onTabChange, project, onLatexChange, chan
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
       {/* Tab Bar */}
-      <div className="flex items-center border-b border-slate-600/50 bg-slate-800/80 backdrop-blur-sm shadow-lg flex-shrink-0">
-        <div className="flex">
-          <Button
-            variant="ghost"
-            onClick={() => onTabChange('pdf')}
-            className={`rounded-none border-r border-slate-600/50 h-14 px-8 transition-all duration-300 ${
-              activeTab === 'pdf' 
-                ? 'bg-gradient-to-r from-slate-700 to-slate-600 text-white shadow-lg border-b-2 border-b-cyan-500' 
-                : 'text-slate-400 hover:text-white hover:bg-slate-700/50 hover:shadow-md'
-            }`}
-          >
-            <Eye className={`w-5 h-5 mr-3 ${activeTab === 'pdf' ? 'text-cyan-400' : 'text-slate-500'}`} />
-            <span className="font-medium">PDF Preview</span>
-          </Button>
-          <Button
-            variant="ghost"
-            onClick={() => onTabChange('latex')}
-            className={`rounded-none h-14 px-8 transition-all duration-300 ${
-              activeTab === 'latex' 
-                ? 'bg-gradient-to-r from-slate-700 to-slate-600 text-white shadow-lg border-b-2 border-b-cyan-500' 
-                : 'text-slate-400 hover:text-white hover:bg-slate-700/50 hover:shadow-md'
-            }`}
-          >
-            <FileText className={`w-5 h-5 mr-3 ${activeTab === 'latex' ? 'text-cyan-400' : 'text-slate-500'}`} />
-            <span className="font-medium">LaTeX Source</span>
-          </Button>
-        </div>
+      <div className="flex items-center gap-1 border-b border-border bg-card/60 px-2 backdrop-blur-sm flex-shrink-0">
+        <button
+          onClick={() => onTabChange('pdf')}
+          className={`group relative flex h-12 items-center gap-2 px-4 text-sm font-medium transition-colors ${
+            activeTab === 'pdf' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <Eye className={`h-4 w-4 ${activeTab === 'pdf' ? 'text-accent' : 'text-muted-foreground group-hover:text-foreground'}`} />
+          PDF Preview
+          {activeTab === 'pdf' && <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-accent" />}
+        </button>
+        <button
+          onClick={() => onTabChange('latex')}
+          className={`group relative flex h-12 items-center gap-2 px-4 text-sm font-medium transition-colors ${
+            activeTab === 'latex' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <FileText className={`h-4 w-4 ${activeTab === 'latex' ? 'text-accent' : 'text-muted-foreground group-hover:text-foreground'}`} />
+          LaTeX Source
+          {activeTab === 'latex' && <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-accent" />}
+        </button>
       </div>
 
       {/* Content */}

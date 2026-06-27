@@ -5,7 +5,7 @@ import { UploadModal } from './UploadModal';
 import { VersionHistory } from './VersionHistory';
 import { useVersionHistory } from '@/hooks/useVersionHistory';
 import { Button } from './ui/button';
-import { PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { PanelRightClose, PanelRightOpen, Minimize2 } from 'lucide-react';
 
 export interface Change {
   id: string;
@@ -23,6 +23,7 @@ export const ResumeEditor = () => {
   const [currentProject, setCurrentProject] = useState<any>(null);
   const [pendingChanges, setPendingChanges] = useState<any[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [fitting, setFitting] = useState(false);
 
   // Initialize version history
   const {
@@ -165,51 +166,101 @@ export const ResumeEditor = () => {
     }
   };
 
+  // Loop-condense the resume until its compiled PDF is a single page.
+  const handleFitOnePage = async () => {
+    if (!currentProject?.id || fitting) return;
+    setFitting(true);
+    try {
+      const res = await fetch('http://localhost:8000/llm/fit-one-page', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: currentProject.id, resume: currentProject.resume_tex }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      if (data.resume_tex) {
+        const updated = {
+          ...currentProject,
+          resume_tex: data.resume_tex,
+          last_updated: new Date().toISOString(),
+          last_description: data.fit ? 'Fit to one page' : 'Condensed (best effort)',
+        };
+        sessionStorage.setItem('currentProject', JSON.stringify(updated));
+        setCurrentProject(updated);
+        saveVersion(data.resume_tex, updated.last_description);
+        window.dispatchEvent(new CustomEvent('projectUpdated', { detail: updated }));
+      }
+    } catch (e) {
+      console.error('❌ Fit-to-one-page failed:', e);
+    } finally {
+      setFitting(false);
+    }
+  };
+
   if (showUploadModal) {
     return <UploadModal onClose={() => setShowUploadModal(false)} />;
   }
 
   return (
-    <div className="flex h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 min-w-0 overflow-hidden">
+    <div className="flex h-screen bg-background text-foreground min-w-0 overflow-hidden">
       {/* Chat Panel */}
-      <div className="w-96 border-r border-slate-700/50 bg-slate-800/50 backdrop-blur-sm shadow-xl flex-shrink-0 min-w-96 overflow-y-auto">
+      <div className="w-96 border-r border-border bg-card flex-shrink-0 min-w-96 overflow-y-auto">
         <ChatPanel />
       </div>
 
       {/* Main Workspace */}
-      <div className="flex-1 flex flex-col bg-slate-900/50 backdrop-blur-sm min-w-0 overflow-hidden">
+      <div className="flex-1 flex flex-col bg-background min-w-0 overflow-hidden">
         {/* Toolbar */}
-        <div className="flex items-center justify-between px-4 py-2 bg-slate-800/80 border-b border-slate-700">
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
+        <div className="flex items-center justify-between px-4 h-12 bg-card/60 border-b border-border backdrop-blur-sm">
+          <div className="flex items-center gap-3">
+            {/* Brand */}
+            <div className="flex items-center gap-2 pr-3 mr-1 border-r border-border">
+              <div className="flex h-6 w-6 items-center justify-center rounded-md bg-accent text-accent-foreground font-display text-[13px] font-bold shadow-sm">P</div>
+              <span className="font-display text-sm font-semibold tracking-tight">Patch Resume</span>
+            </div>
+            <button
               onClick={handleUndo}
               disabled={!canUndo}
-              className="bg-slate-700 border-slate-600 hover:bg-slate-600"
+              className="rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition hover:bg-secondary hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent"
             >
               Undo
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
+            </button>
+            <button
               onClick={handleRedo}
               disabled={!canRedo}
-              className="bg-slate-700 border-slate-600 hover:bg-slate-600"
+              className="rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition hover:bg-secondary hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent"
             >
               Redo
-            </Button>
+            </button>
           </div>
 
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setShowHistory(!showHistory)}
-            className="bg-slate-700 border-slate-600 hover:bg-slate-600"
-          >
-            {showHistory ? <PanelRightClose className="w-4 h-4 mr-2" /> : <PanelRightOpen className="w-4 h-4 mr-2" />}
-            {showHistory ? 'Hide' : 'Show'} History
-          </Button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleFitOnePage}
+              disabled={fitting || !currentProject}
+              title="Condense the resume until it fits on a single page"
+              className="inline-flex items-center gap-1.5 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-accent-foreground transition hover:opacity-90 disabled:opacity-50"
+            >
+              {fitting ? (
+                <>
+                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  Fitting…
+                </>
+              ) : (
+                <>
+                  <Minimize2 className="w-3.5 h-3.5" />
+                  Fit to 1 page
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => setShowHistory(!showHistory)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+            >
+              {showHistory ? <PanelRightClose className="w-3.5 h-3.5" /> : <PanelRightOpen className="w-3.5 h-3.5" />}
+              {showHistory ? 'Hide' : 'Show'} History
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 flex min-h-0 overflow-hidden">

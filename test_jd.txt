@@ -1,0 +1,19 @@
+AI Builder-in-Residence — Summit Partners, Base Camp Program (Boston, MA)
+
+A full-time residency building AI tools across the firm and its portfolio. From month one you work directly with Summit's investment team to build AI tools that matter — research, monitoring, and business operations, including automating memo drafting, executive search, and sourcing.
+
+What you'll do:
+- Identify high-value AI opportunities inside the firm and build tools that improve day-to-day operations.
+- Take frameworks you've built internally and deploy them across portfolio companies; build repeatable systems that scale.
+
+Candidate profile:
+- Builders first — comfortable with Python, LLM APIs, and agent frameworks. Shipped work and source code matter more than credentials.
+- Systems thinkers — design for reuse; think about how a solution scales across teams before writing code.
+- Business curious — bridge engineering and business; understand the outcomes that matter to operators and investors.
+- High-agency — comfortable with ambiguity; make decisions and move forward without perfect specifications.
+
+Qualifications:
+- 0–2 years of professional experience
+- Background in computer science, engineering, or a quantitative field
+- Demonstrated experience building with LLMs, agents, or AI-powered applications
+- Strong written and verbal communication; able to work independently in a fast-moving environment

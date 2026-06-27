@@ -137,87 +137,84 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ project }) => {
   }
 
   return (
-    <div className="flex flex-col h-full bg-slate-800">
+    <div className="flex flex-col h-full bg-card">
       {/* Header */}
-      <div className="flex-shrink-0 p-4 border-b border-slate-700">
+      <div className="flex-shrink-0 px-5 py-3 border-b border-border">
         <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-200">PDF Preview</h2>
-            <p className="text-sm text-slate-400">Live preview of your resume</p>
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-2 w-2 items-center justify-center">
+              <span className={`h-2 w-2 rounded-full ${isLoading ? 'animate-pulse bg-accent' : pdfError ? 'bg-destructive' : 'bg-emerald-400'}`} />
+            </span>
+            <div>
+              <h2 className="text-sm font-semibold text-foreground leading-tight">Live Preview</h2>
+              <p className="text-xs text-muted-foreground">{isLoading ? 'Compiling…' : pdfError ? 'Needs attention' : 'Up to date'}</p>
+            </div>
           </div>
           {pdfError && (
             <button
               onClick={retryPdfLoad}
-              className="px-3 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700"
+              className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground transition hover:opacity-90"
             >
-              Retry PDF Generation
+              Retry
             </button>
           )}
         </div>
       </div>
 
       {/* PDF Content */}
-      <div className="flex-1 min-h-0">
-        {isLoading ? (
+      <div className="flex-1 min-h-0 relative">
+        {pdfError ? (
           <div className="flex items-center justify-center h-full">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-              <p className="text-slate-400">Generating PDF...</p>
-            </div>
-          </div>
-        ) : pdfError ? (
-          <div className="text-center py-20">
-            <div className="text-red-600 mb-4">
-              <h3 className="text-lg font-semibold">PDF Preview Error</h3>
-              <p className="text-sm mb-2">Unable to load PDF preview.</p>
+            <div className="text-center max-w-md px-6">
+              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-rose-500/10 text-rose-400">
+                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
+              </div>
+              <h3 className="text-base font-semibold text-foreground">Couldn't render the PDF</h3>
+              <p className="mt-1 text-sm text-muted-foreground">The compile may still be finishing, or the LaTeX needs a fix.</p>
               {errorMessage && (
-                <div className="bg-red-50 border border-red-200 rounded p-3 mb-4 max-w-md mx-auto">
-                  <p className="text-xs text-red-700 font-mono break-all">
-                    Error: {errorMessage}
-                  </p>
-                </div>
+                <p className="mt-3 rounded-md bg-rose-500/10 px-3 py-2 text-left font-mono text-xs text-rose-300 break-all">{errorMessage}</p>
               )}
               <button
                 onClick={retryPdfLoad}
-                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                className="mt-4 inline-flex items-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition hover:opacity-90"
               >
-                Retry PDF Generation
+                Retry
               </button>
             </div>
           </div>
         ) : pdfUrl ? (
-          <div className="h-full bg-slate-100">
-            {/* Page indicators */}
-            <div className="absolute top-4 right-4 z-10 bg-slate-800/90 text-white px-3 py-1 rounded-full text-xs">
-              <span className="text-slate-300">PDF Preview</span>
-            </div>
-            
-            {/* PDF Container with page-like styling */}
-            <div className="w-full h-full overflow-auto p-4">
-              <div className="max-w-4xl mx-auto">
-                <div className="bg-white shadow-2xl rounded-lg overflow-hidden">
-                  <iframe
-                    src={pdfUrl}
-                    className="w-full h-[800px] border-0"
-                    onLoad={handlePdfLoad}
-                    onError={handlePdfError}
-                    title="Resume PDF"
-                  />
-                </div>
-                
+          <div className="h-full w-full overflow-auto bg-canvas px-6 py-6">
+            {/* Always-mounted iframe so onLoad can clear the loading state */}
+            <div className="mx-auto max-w-3xl">
+              <div className="overflow-hidden rounded-lg bg-white shadow-2xl ring-1 ring-black/10">
+                <iframe
+                  src={pdfUrl}
+                  className="h-[860px] w-full border-0"
+                  onLoad={handlePdfLoad}
+                  onError={handlePdfError}
+                  title="Resume PDF"
+                />
               </div>
             </div>
+
+            {/* Loading overlay (does not unmount the iframe) */}
+            {isLoading && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-canvas/80 backdrop-blur-sm transition-opacity">
+                <div className="text-center">
+                  <div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-accent/30 border-t-accent" />
+                  <p className="text-sm text-muted-foreground">Compiling your resume…</p>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
-              <div className="text-slate-400 mb-4">
-                <svg className="w-16 h-16 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
+                <svg className="h-7 w-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
               </div>
-              <h3 className="text-lg font-semibold text-slate-200 mb-2">PDF Not Available</h3>
-              <p className="text-slate-400">PDF generation failed or is not ready</p>
+              <h3 className="text-base font-semibold text-foreground">No preview yet</h3>
+              <p className="mt-1 text-sm text-muted-foreground">Upload a resume to see the live PDF.</p>
             </div>
           </div>
         )}

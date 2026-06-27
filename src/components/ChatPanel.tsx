@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Send, Sparkles } from 'lucide-react';
+import { Send, Sparkles, Briefcase, X } from 'lucide-react';
 
 interface Message {
   id: string;
@@ -14,6 +14,8 @@ export const ChatPanel = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [jdOpen, setJdOpen] = useState(false);
+  const [jdText, setJdText] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -57,20 +59,44 @@ export const ChatPanel = () => {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    const message = input.trim();
+    if (!message || isLoading) return;
+    setInput('');
+    sendMessage(message);
+  };
+
+  // Tailor the resume to a pasted job description.
+  const handleTailor = () => {
+    const jd = jdText.trim();
+    if (!jd || isLoading) return;
+    const instruction =
+      'Tailor my resume to the following job description. Reorder and rewrite the ' +
+      'summary, bullet points, and skills to emphasize the most relevant experience ' +
+      'and naturally weave in the key skills, tools, and keywords from the posting. ' +
+      'Stay truthful — do not invent experience, employers, or credentials. Keep it ' +
+      'concise (ideally one page) and keep the existing LaTeX document structure and ' +
+      'formatting exactly as it is. Return the full updated LaTeX.\n\n' +
+      'JOB DESCRIPTION:\n' + jd;
+    sendMessage(instruction, '✦ Tailor my resume to this job description');
+    setJdText('');
+    setJdOpen(false);
+  };
+
+  // Core send routine. `message` is what's sent to the model; `displayText`
+  // (optional) is what's shown in the chat bubble (used for long JD pastes).
+  const sendMessage = async (message: string, displayText?: string) => {
+    if (!message.trim() || isLoading) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
       type: 'user',
-      content: input.trim(),
+      content: displayText || message,
       timestamp: new Date()
     };
 
     setMessages(prev => [...prev, userMessage]);
-    const message = input.trim();
-    setInput('');
     setIsLoading(true);
 
     try {
@@ -115,7 +141,7 @@ export const ChatPanel = () => {
       const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
         type: 'assistant',
-        content: data.response + (data.explanation ? `\n\n_${data.explanation}_` : ''),
+        content: (data.response && data.response.trim()) || data.explanation || 'Done.',
         timestamp: new Date()
       };
       setMessages(prev => [...prev, aiMessage]);
@@ -155,20 +181,18 @@ export const ChatPanel = () => {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="p-4 border-b border-slate-700 bg-gradient-to-r from-slate-800 to-slate-900">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full flex items-center justify-center">
-            <Sparkles className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h2 className="font-semibold text-white text-lg">AI Resume Assistant</h2>
-            <p className="text-sm text-slate-400">Powered by advanced AI</p>
-          </div>
+      <div className="flex items-center gap-3 border-b border-border bg-card px-4 h-12 flex-shrink-0">
+        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/15 text-accent ring-1 ring-accent/25">
+          <Sparkles className="h-4 w-4" />
+        </div>
+        <div className="leading-tight">
+          <h2 className="font-display text-sm font-semibold text-foreground">AI Editor</h2>
+          <p className="text-[11px] text-muted-foreground">Powered by Claude</p>
         </div>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-900 scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-slate-800 hover:scrollbar-thumb-slate-500" style={{
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-background scrollbar-thin scrollbar-thumb-slate-600 scrollbar-track-slate-800 hover:scrollbar-thumb-slate-500" style={{
         scrollbarWidth: 'thin',
         scrollbarColor: '#475569 #1e293b'
       }}>
@@ -236,40 +260,68 @@ export const ChatPanel = () => {
        </div>
 
        {/* Input */}
-       <div className="p-4 border-t border-slate-700 bg-slate-800">
-         <form onSubmit={handleSubmit} className="flex gap-3">
-           <div className="flex-1 relative">
+       <div className="p-3 border-t border-border bg-card space-y-2">
+         {/* Tailor to a job description */}
+         {jdOpen ? (
+           <div className="rounded-lg border border-accent/40 bg-secondary/40 p-2.5">
+             <div className="mb-1.5 flex items-center justify-between">
+               <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                 <Briefcase className="h-3.5 w-3.5 text-accent" /> Tailor to a job description
+               </span>
+               <button onClick={() => setJdOpen(false)} className="text-muted-foreground transition hover:text-foreground">
+                 <X className="h-3.5 w-3.5" />
+               </button>
+             </div>
+             <Textarea
+               value={jdText}
+               onChange={(e) => setJdText(e.target.value)}
+               placeholder="Paste the full job description here — Claude will rewrite your resume to match it."
+               className="min-h-[92px] max-h-[200px] resize-none rounded-md border-border bg-background text-foreground placeholder:text-muted-foreground text-sm scrollbar-thin"
+               disabled={isLoading}
+             />
+             <Button
+               onClick={handleTailor}
+               disabled={!jdText.trim() || isLoading}
+               className="mt-2 w-full rounded-md bg-accent text-accent-foreground transition hover:opacity-90 disabled:opacity-40"
+             >
+               {isLoading ? 'Tailoring…' : 'Tailor my resume'}
+             </Button>
+           </div>
+         ) : (
+           <button
+             onClick={() => setJdOpen(true)}
+             disabled={isLoading}
+             className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border py-2 text-xs font-medium text-muted-foreground transition hover:border-accent/60 hover:text-foreground disabled:opacity-40"
+           >
+             <Briefcase className="h-3.5 w-3.5" /> Tailor to a job description
+           </button>
+         )}
+
+         <form onSubmit={handleSubmit} className="flex items-end gap-2">
            <Textarea
              ref={textareaRef}
              value={input}
              onChange={(e) => setInput(e.target.value)}
-               onKeyPress={handleKeyPress}
-               placeholder="Ask me to improve your resume... (Press Enter to send, Shift+Enter for new line)"
-               className="w-full bg-slate-700/50 border-slate-600 text-white placeholder-slate-400 resize-none min-h-[48px] max-h-[140px] pr-12 py-3 px-4 focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 transition-all duration-200 scrollbar-thin scrollbar-thumb-slate-500 scrollbar-track-slate-700 hover:scrollbar-thumb-slate-400"
+             onKeyPress={handleKeyPress}
+             placeholder="Ask Claude to improve your resume…"
+             className="flex-1 resize-none rounded-lg border-border bg-secondary/50 text-foreground placeholder:text-muted-foreground min-h-[44px] max-h-[140px] py-2.5 px-3 focus-visible:ring-2 focus-visible:ring-accent focus-visible:border-accent transition scrollbar-thin"
              disabled={isLoading}
              rows={1}
-               style={{
-                 scrollbarWidth: 'thin',
-                 scrollbarColor: '#64748b #1e293b'
-               }}
            />
-             <div className="absolute right-2 top-1/2 transform -translate-y-1/2 text-xs text-slate-500">
-               {isLoading ? 'Sending...' : 'Enter to send'}
-             </div>
-           </div>
-           <Button 
-             type="submit" 
-             size="icon" 
+           <Button
+             type="submit"
+             size="icon"
              disabled={!input.trim() || isLoading}
-             className="shrink-0 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white shadow-lg hover:shadow-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+             className="h-11 w-11 shrink-0 rounded-lg bg-accent text-accent-foreground transition hover:opacity-90 disabled:opacity-40"
            >
              {isLoading ? (
-               <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+               <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
              ) : (
-             <Send className="w-4 h-4" />
+               <Send className="h-4 w-4" />
              )}
            </Button>
          </form>
+         <p className="mt-1.5 px-1 text-[11px] text-muted-foreground">Enter to send · Shift+Enter for a new line</p>
        </div>
     </div>
   );

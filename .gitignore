@@ -36,6 +36,11 @@ backend/.env.local
 
 # User data backups (contain real resume data)
 backend/projects_backup.json
+projects_backup.json
+
+# Private application materials (not for the public repo)
+SUMMIT_LOOM_SCRIPT.md
+SUMMIT_LOOM_SCRIPT.docx
 
 # Claude Code local settings
 .claude/

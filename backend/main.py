@@ -13,7 +13,7 @@ import json
 import uuid
 import re
 from datetime import datetime
-import openai
+import anthropic
 from dotenv import load_dotenv
 
 # Import services
@@ -27,9 +27,54 @@ try:
 except Exception as e:
     print(f"⚠️ WARNING: Could not load .env file: {e}")
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
-if not openai.api_key:
-    print("⚠️ WARNING: OPENAI_API_KEY not set in environment")
+# --- Anthropic (Claude) client setup ---
+# This app was originally wired to OpenAI; it now runs on Claude via the
+# Anthropic SDK. Set ANTHROPIC_API_KEY in your .env to enable AI features.
+LLM_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+CLAUDE_MODEL = "claude-opus-4-8"
+anthropic_client = anthropic.Anthropic(api_key=LLM_API_KEY) if LLM_API_KEY else None
+if not LLM_API_KEY:
+    print("⚠️ WARNING: ANTHROPIC_API_KEY not set in environment")
+
+
+def claude_complete(system: str, user: str, max_tokens: int = 2000) -> str:
+    """Call Claude with a system + single user message and return the text.
+
+    Mirrors the old OpenAI chat-completion helper: pass the system prompt
+    separately (Anthropic takes `system` as its own parameter) and read the
+    text out of the first content block.
+    """
+    if anthropic_client is None:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY is required for AI features")
+    response = anthropic_client.messages.create(
+        model=CLAUDE_MODEL,
+        max_tokens=max_tokens,
+        system=system,
+        messages=[{"role": "user", "content": user}],
+    )
+    return "".join(block.text for block in response.content if block.type == "text")
+
+
+def _with_canonical_preamble(latex: str) -> str:
+    """Force the known-good template preamble onto AI-generated LaTeX.
+
+    Every AI edit regenerates the whole document, and the model sometimes
+    rewrites the preamble badly (breaking the \\sectiontitle command so
+    section headings render inline, or reintroducing the stray "[1]1"
+    artifact). We keep the model's BODY (from \\begin{document} onward) and
+    swap in the canonical preamble so formatting can never drift.
+    """
+    if not latex:
+        return latex
+    idx = latex.find("\\begin{document}")
+    if idx == -1:
+        return latex  # no body marker found — leave untouched
+    try:
+        preamble = TemplateService()._get_preamble()
+    except Exception:
+        return latex
+    return preamble + latex[idx:]
+
 
 # --- Comprehensive LaTeX Cleaning System ---
 
@@ -81,11 +126,15 @@ def clean_latex_content(tex: str, max_iterations: int = 3) -> tuple[str, bool, l
             (r'\\textit\{([^}]*)$', r'\\textit{\1}'),  # Fix incomplete textit
             (r'\\section\*?\{([^}]*)$', r'\\section*{\1}'),  # Fix incomplete sections
             (r'\\begin\{([^}]+)\}\s*$\s*(?!\\end)', r'\\begin{\1}\n\\end{\1}'),  # Fix incomplete environments
-            (r'ewcommand(?!\\)', r''),  # Remove bare ewcommand
+            # Remove a TRULY bare "ewcommand" (a corruption artifact) but never the
+            # "ewcommand" inside valid \newcommand / \renewcommand (both preceded by "n").
+            (r'(?<![\\a-zA-Z])ewcommand', r''),
             (r'\\\\\\+', r'\\\\'),  # Fix multiple backslashes
             (r'\n\s*\n\s*\n+', r'\n\n'),  # Fix excessive blank lines
-            (r'\{\{+', r'{'),  # Fix multiple opening braces
-            (r'\}\}+', r'}'),  # Fix multiple closing braces
+            # NOTE: we intentionally do NOT collapse {{ -> { or }} -> } here.
+            # Adjacent braces are valid, common LaTeX (e.g. the closing of a
+            # \newcommand body that ends in \vspace{6pt}}), and collapsing them
+            # silently eats real closing braces.
         ]
         
         for pattern, replacement in fixes:
@@ -196,12 +245,12 @@ def save_projects():
     except Exception as e:
         print(f"⚠️ DEBUG: Could not save projects backup: {e}")
 
-# Check OpenAI API key on startup
-if openai.api_key:
-    print("✅ DEBUG: OpenAI API key found - AI features enabled")
+# Check Anthropic API key on startup
+if LLM_API_KEY:
+    print("✅ DEBUG: Anthropic API key found - AI features enabled")
 else:
-    print("⚠️ WARNING: No OpenAI API key found - using fallback template mode")
-    print("💡 TIP: Set OPENAI_API_KEY environment variable to enable AI features")
+    print("⚠️ WARNING: No Anthropic API key found - using fallback template mode")
+    print("💡 TIP: Set ANTHROPIC_API_KEY environment variable to enable AI features")
 
 app = FastAPI(
     title="Resume Builder API",
@@ -342,22 +391,17 @@ def convert_to_latex_with_chat(text_content: str) -> str:
     """
     
     try:
-        # Use OpenAI to parse the text
-        print("🤖 DEBUG: Calling OpenAI API...")
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a professional resume parsing expert. Extract structured data from compressed resume text with high accuracy. Return clean, professional JSON with complete information extraction. Focus on clarity and precision."},
-                {"role": "user", "content": parse_prompt}
-            ],
-            temperature=0.1
+        # Use Claude to parse the text
+        print(" DEBUG: Calling Anthropic API...")
+        ai_response = claude_complete(
+            system="You are a professional resume parsing expert. Extract structured data from compressed resume text with high accuracy. Return clean, professional JSON with complete information extraction. Focus on clarity and precision.",
+            user=parse_prompt,
+            max_tokens=4000,
         )
-        
-        print(f"🤖 DEBUG: OpenAI response received: {len(response.choices[0].message.content)} characters")
-        
-        # Parse the JSON response
-        import json
-        ai_response = response.choices[0].message.content
+
+        print(f"🤖 DEBUG: Anthropic response received: {len(ai_response)} characters")
+
+        # Parse the JSON response (json is imported at module level)
         print(f"🤖 DEBUG: AI response preview: {ai_response[:200]}...")
         
         # Clean the response (remove markdown code blocks if present)
@@ -691,23 +735,22 @@ def fix_compilation_errors(latex_content: str, original_request: str, project_id
         return latex_content
     
     for attempt in range(max_attempts):
-        print(f"🔧 DEBUG: Testing compilation (attempt {attempt + 1}/{max_attempts})")
+        print(f" DEBUG: Testing compilation (attempt {attempt + 1}/{max_attempts})")
         
         # Test compilation
         success, pdf_path, error_msg = compile_service.compile_latex(latex_content, f"{project_id}_test")
         
         if success:
-            print(f"✅ DEBUG: LaTeX compiles successfully")
+            print(f"DEBUG: LaTeX compiles successfully")
             return latex_content
         
-        print(f"❌ DEBUG: Compilation failed: {error_msg}")
+        print(f"DEBUG: Compilation failed: {error_msg}")
         
         if attempt < max_attempts - 1:
             # Send error back to AI for fixing
             try:
-                print(f"🤖 DEBUG: Sending compilation error to AI for fixing...")
+                print(f" DEBUG: Sending compilation error to AI for fixing...")
         
-                client = openai.OpenAI(api_key=openai.api_key)
                 fix_prompt = f"""The LaTeX code I generated has compilation errors. Please fix it.
 
 Original request: {original_request}
@@ -719,17 +762,11 @@ Compilation error: {error_msg}
 
 Please provide the corrected LaTeX code that will compile without errors. Return only the LaTeX code, no explanations."""
                 
-                response = client.chat.completions.create(
-                    model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": "You are a LaTeX expert. Fix compilation errors and return clean, working LaTeX code."},
-                        {"role": "user", "content": fix_prompt}
-                    ],
-                    max_tokens=2000,
-                    temperature=0.1
-                )
-                
-                fixed_latex = response.choices[0].message.content.strip()
+                fixed_latex = claude_complete(
+                    system="You are a LaTeX expert. Fix compilation errors and return clean, working LaTeX code.",
+                    user=fix_prompt,
+                    max_tokens=4000,
+                ).strip()
                 
                 # Clean up the response (remove markdown code blocks if present)
                 if fixed_latex.startswith('```latex'):
@@ -990,7 +1027,7 @@ async def ingest_resume(
     """Process uploaded resume file and convert to LaTeX"""
     try:
         print(f"🔍 DEBUG: Starting file upload - {file.filename}, type: {file.content_type}")
-        print(f"🔍 DEBUG: OpenAI API key status: {'Found' if openai.api_key else 'Missing'}")
+        print(f"🔍 DEBUG: Anthropic API key status: {'Found' if LLM_API_KEY else 'Missing'}")
         
         # Validate file type
         if not file.content_type.startswith(('application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'text/plain')):
@@ -1090,11 +1127,11 @@ def generate_patch(request: PatchRequest):
             print(f"❌ ERROR: No project found with ID: {project_id}")
             raise HTTPException(status_code=404, detail=f"No project found. Please upload a resume first.")
         
-        if not openai.api_key:
-            print("❌ ERROR: No OpenAI API key provided")
-            raise HTTPException(status_code=500, detail="OpenAI API key is required for patch generation")
-        
-        print("🤖 DEBUG: Using OpenAI for patch generation")
+        if not LLM_API_KEY:
+            print("❌ ERROR: No Anthropic API key provided")
+            raise HTTPException(status_code=500, detail="Anthropic API key is required for patch generation")
+
+        print("🤖 DEBUG: Using Claude for patch generation")
         try:
             # Use OpenAI to generate real patches
             system_prompt = """You are a LaTeX resume expert. Generate specific, targeted changes to improve a resume based on the user's instruction.
@@ -1181,18 +1218,11 @@ Generate specific changes to implement this instruction."""
             print(f"🔍 DEBUG: System prompt: {system_prompt[:200]}...")
             print(f"🔍 DEBUG: User prompt: {user_prompt[:200]}...")
             
-            client = openai.OpenAI(api_key=openai.api_key)
-            response = client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                max_tokens=2000,
-                temperature=0.1
+            ai_response = claude_complete(
+                system=system_prompt,
+                user=user_prompt,
+                max_tokens=4000,
             )
-            
-            ai_response = response.choices[0].message.content
             print(f"📥 DEBUG: Received from OpenAI: {ai_response[:200]}...")
             
             # Parse AI response
@@ -1248,8 +1278,8 @@ def chat_with_agent(request: dict):
         print(f"📚 DEBUG: Chat history length: {len(chat_history)}")
         print(f"📄 DEBUG: Current resume length: {len(current_resume) if current_resume else 0}")
 
-        if not openai.api_key:
-            raise HTTPException(status_code=500, detail="OpenAI API key is required")
+        if not LLM_API_KEY:
+            raise HTTPException(status_code=500, detail="Anthropic API key is required")
 
         # Enhanced system prompt for better resume editing
         system_prompt = """You are an expert AI resume editor and career advisor. You help users create, edit, and perfect their resumes through natural conversation.
@@ -1264,10 +1294,14 @@ CORE CAPABILITIES:
 
 EDITING PHILOSOPHY:
 - Make changes immediately when user gives clear instructions
-- Be conversational and natural, not robotic
-- Provide brief explanations of changes made
-- Suggest improvements proactively when you see opportunities
 - Ask clarifying questions only when truly necessary
+
+RESPONSE STYLE (important):
+- Keep your chat reply SHORT — one or two plain sentences, max.
+- Just say what you changed, like a helpful colleague. No preamble, no headers, no bullet lists, no "A few honest notes" sections.
+- Sound natural and human, not formal or robotic. Don't restate the resume back.
+- Only flag something extra (e.g. a missing skill) if it's genuinely important, and keep it to one short sentence.
+- The detailed change summary goes in the JSON "explanation" field, NOT in your chat reply — don't repeat it.
 
 WHEN USER WANTS TO EDIT (name, email, dates, content, etc.):
 1. If you have the current LaTeX resume, make the edit directly
@@ -1320,36 +1354,32 @@ Assistant: For software engineering roles, emphasize: technical skills (language
 
 Remember: You're having a natural conversation. Be helpful, concise, and proactive!"""
 
-        # Build messages with resume context
-        messages = [{"role": "system", "content": system_prompt}]
-
-        # Add resume context if available
+        # Claude takes the system prompt separately (not as a message). Fold the
+        # resume context into the system prompt.
+        full_system = system_prompt
         if current_resume and len(current_resume) > 0:
-            context_msg = f"Current resume LaTeX:\n```latex\n{current_resume}\n```"
-            messages.append({"role": "system", "content": context_msg})
+            full_system += f"\n\nCurrent resume LaTeX:\n```latex\n{current_resume}\n```"
 
-        # Add chat history (last 6 messages for context)
+        # Build conversation messages (user/assistant only). Claude rejects a
+        # leading assistant turn, so drop any until the first user message.
+        convo = []
         for msg in chat_history[-6:]:
-            messages.append({
-                "role": msg.get('role', 'user'),
-                "content": msg.get('content', '')
-            })
+            role = 'assistant' if msg.get('role') == 'assistant' else 'user'
+            if not convo and role != 'user':
+                continue
+            convo.append({"role": role, "content": msg.get('content', '')})
+        convo.append({"role": "user", "content": message})
 
-        # Add current message
-        messages.append({"role": "user", "content": message})
+        print(f"📤 DEBUG: Sending to Claude with {len(convo)} messages")
 
-        print(f"📤 DEBUG: Sending to OpenAI GPT-4 with {len(messages)} messages")
-
-        # Use GPT-4 for better understanding and editing
-        client = openai.OpenAI(api_key=openai.api_key)
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=messages,
-            max_tokens=2500,
-            temperature=0.3  # Lower temperature for more consistent edits
+        response = anthropic_client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=4000,
+            system=full_system,
+            messages=convo,
         )
 
-        ai_response = response.choices[0].message.content
+        ai_response = "".join(block.text for block in response.content if block.type == "text")
         print(f"📥 DEBUG: Received response ({len(ai_response)} chars)")
 
         # Parse AI response for LaTeX updates
@@ -1413,6 +1443,115 @@ Remember: You're having a natural conversation. Be helpful, concise, and proacti
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+
+
+def _count_pdf_pages(pdf_path: str):
+    """Return the number of pages in a compiled PDF, or None if unknown."""
+    try:
+        import PyPDF2
+        with open(pdf_path, 'rb') as f:
+            return len(PyPDF2.PdfReader(f).pages)
+    except Exception as e:
+        print(f"⚠️ DEBUG: page count failed: {e}")
+        return None
+
+
+def _strip_latex_fences(text: str) -> str:
+    """Strip markdown ```latex ... ``` fences from an AI response."""
+    t = (text or "").strip()
+    if t.startswith("```latex"):
+        t = t[8:]
+    elif t.startswith("```"):
+        t = t[3:]
+    if t.endswith("```"):
+        t = t[:-3]
+    return t.strip()
+
+
+@app.post("/llm/fit-one-page")
+def fit_one_page(request: dict):
+    """Iteratively condense the resume until its compiled PDF is a single page.
+
+    Loop: compile -> count pages -> if > 1, ask Claude to condense -> repeat,
+    up to a hard cap. Each candidate is validated by compiling it.
+    """
+    project_id = request.get('project_id')
+    if not project_id or project_id not in projects:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not LLM_API_KEY:
+        raise HTTPException(status_code=500, detail="Anthropic API key is required")
+
+    project = projects[project_id]
+    latex = request.get('resume') or project.get('resume_tex', '')
+    if not latex:
+        raise HTTPException(status_code=400, detail="No resume content to fit")
+
+    MAX_ITERS = 5
+    pages = None
+    iterations = 0
+
+    for i in range(MAX_ITERS + 1):
+        # Compile the current draft and count its pages.
+        cleaned, _, _ = clean_latex_content(latex)
+        latex = cleaned
+        success, pdf_path, err = compile_service.compile_latex(latex, f"{project_id}_fit")
+        pages = _count_pdf_pages(pdf_path) if success and pdf_path else None
+        print(f"📏 DEBUG: fit-one-page iter {i}: compiled={success}, pages={pages}")
+
+        if pages is not None and pages <= 1:
+            print("✅ DEBUG: resume now fits on one page")
+            break
+        if i == MAX_ITERS:
+            print("⚠️ DEBUG: hit max fit iterations; using best effort")
+            break
+
+        # Ask Claude to condense, getting more aggressive the further over we are.
+        system_prompt = (
+            "You are a LaTeX resume expert. You condense resumes to EXACTLY one page "
+            "while keeping them truthful, professional, and ATS-friendly."
+        )
+        user_prompt = f"""This resume currently compiles to {pages if pages else 'more than 1'} pages. Rewrite the FULL LaTeX so it fits on EXACTLY ONE page.
+
+Shorten in this order of preference:
+1. Tighten wording — make each bullet a single crisp idea; cut filler and weak qualifiers.
+2. Trim the least-relevant or oldest content — drop a weak bullet, or the oldest/least-relevant role, if needed.
+3. Reduce vertical spacing (\\vspace, \\parskip). You may set the font to 10pt and margins to ~0.5in.
+
+Rules:
+- Keep bullets ATOMIC — one accomplishment per bullet, ideally one line. NEVER merge several accomplishments into one long run-on sentence; to save space, drop the weakest bullet instead of merging.
+- Stay truthful — do not invent experience, employers, metrics, or credentials.
+- Keep the same overall structure and section style.
+- Keep the most relevant experience and the contact header.
+- Return ONLY the full updated LaTeX document, no commentary, no markdown fences.
+
+Current LaTeX:
+{latex}"""
+
+        try:
+            resp = claude_complete(system=system_prompt, user=user_prompt, max_tokens=4000)
+            candidate = _strip_latex_fences(resp)
+            if candidate and "\\documentclass" in candidate and "\\end{document}" in candidate:
+                latex = candidate
+                iterations += 1
+            else:
+                print("⚠️ DEBUG: condense returned unusable LaTeX; stopping")
+                break
+        except Exception as e:
+            print(f"❌ ERROR: fit-one-page condense failed: {e}")
+            break
+
+    project["resume_tex"] = latex
+    project["last_updated"] = datetime.utcnow().isoformat()
+    projects[project_id] = project
+    save_projects()
+
+    return {
+        "resume_tex": latex,
+        "pages": pages,
+        "fit": pages == 1,
+        "iterations": iterations,
+    }
+
 
 @app.post("/changes/apply")
 async def apply_changes(
@@ -1514,14 +1653,13 @@ async def get_pdf(project_id: str, t: Optional[str] = None):
         # Use compile service to generate PDF
         success, pdf_path, error_msg = compile_service.compile_latex(latex_content, project_id)
         
-        # If compilation fails due to LaTeX errors, try regenerating with OpenAI
+        # If compilation fails due to LaTeX errors, try regenerating with Claude
         if not success and error_msg and any(keyword in error_msg.lower() for keyword in ['undefined', 'missing', 'error', 'ewcommand']):
-            print(f"⚠️ DEBUG: PDF compilation failed with LaTeX errors, attempting AI-powered recovery")
+            print(f" DEBUG: PDF compilation failed with LaTeX errors, attempting AI-powered recovery")
             print(f"   Error: {error_msg[:200]}...")
             
             try:
-                # Use OpenAI to fix the LaTeX
-                client = openai.OpenAI(api_key=openai.api_key)
+                # Use Claude to fix the LaTeX
                 fix_prompt = f"""The following LaTeX code has compilation errors. Please fix it and return clean, valid LaTeX that will compile without errors.
 
 Errors encountered: {error_msg}
@@ -1536,17 +1674,11 @@ Rules:
 4. Keep the content structure intact
 5. Use standard LaTeX packages only"""
                 
-                response = client.chat.completions.create(
-                    model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": "You are a LaTeX expert. Fix broken LaTeX code and return clean, compilable LaTeX."},
-                        {"role": "user", "content": fix_prompt}
-                    ],
-                    max_tokens=3000,
-                    temperature=0.1
-                )
-                
-                fixed_latex = response.choices[0].message.content.strip()
+                fixed_latex = claude_complete(
+                    system="You are a LaTeX expert. Fix broken LaTeX code and return clean, compilable LaTeX.",
+                    user=fix_prompt,
+                    max_tokens=4000,
+                ).strip()
                 
                 # Clean up the AI response
                 if fixed_latex.startswith('```latex'):

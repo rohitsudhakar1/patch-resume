@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Upload, FileText, File, Image } from 'lucide-react';
 
@@ -79,95 +78,72 @@ export const UploadModal = ({ onClose }: UploadModalProps) => {
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/95 backdrop-blur-sm flex items-center justify-center z-50">
-      <Card className="w-full max-w-2xl mx-4 p-8 bg-slate-800 border-slate-700 shadow-2xl">
-        <div className="text-center space-y-6">
-          <div>
-            <h1 className="text-3xl font-bold text-white mb-2">Resume Builder</h1>
-            <p className="text-slate-300">
-              Upload your existing resume to get started. We'll convert it to clean, ATS-friendly LaTeX format.
-            </p>
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-background p-4">
+      {/* ambient accent glow */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute -top-40 left-1/2 h-80 w-[36rem] -translate-x-1/2 rounded-full bg-accent/10 blur-3xl" />
+      </div>
+
+      <Card className="relative w-full max-w-xl border-border bg-card/90 p-8 shadow-2xl backdrop-blur-sm">
+        {/* Brand */}
+        <div className="mb-7 flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent font-display text-base font-bold text-accent-foreground shadow-sm">P</div>
+          <div className="leading-tight">
+            <h1 className="font-display text-lg font-semibold tracking-tight text-foreground">Patch Resume</h1>
+            <p className="text-xs text-muted-foreground">AI-proposed edits · live LaTeX · clean PDF</p>
           </div>
-
-          {isProcessing ? (
-            <div className="space-y-4">
-              <div className="w-16 h-16 mx-auto border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-              <div>
-                <h3 className="font-semibold text-white">Processing your resume...</h3>
-                <p className="text-sm text-slate-400 mt-1">
-                  Extracting content and converting to LaTeX format
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div
-              className={`border-2 border-dashed rounded-lg p-12 transition-all duration-200 cursor-pointer ${
-                isDragging
-                  ? 'border-blue-500 bg-blue-500/10 shadow-lg'
-                  : 'border-slate-600 hover:border-blue-500/70 hover:bg-slate-700/30 hover:shadow-lg'
-              }`}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onClick={() => document.getElementById('file-input')?.click()}
-            >
-              <input
-                id="file-input"
-                type="file"
-                accept=".pdf,.docx,.txt"
-                onChange={handleFileInput}
-                className="hidden"
-              />
-              
-              <div className="space-y-4">
-                <Upload className={`w-12 h-12 mx-auto transition-colors ${
-                  isDragging ? 'text-blue-400' : 'text-slate-500'
-                }`} />
-                <div>
-                  <h3 className="font-semibold text-lg text-white">Drop your resume here</h3>
-                  <p className="text-slate-400">or click to browse</p>
-                </div>
-                
-                <div className="flex justify-center gap-6 text-sm text-slate-500">
-                  <div className="flex items-center gap-1">
-                    <File className="w-4 h-4" />
-                    PDF
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <FileText className="w-4 h-4" />
-                    DOCX
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Image className="w-4 h-4" />
-                    TXT
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {!isProcessing && (
-            <div className="space-y-3">
-              <div className="text-sm text-slate-400">
-                <strong className="text-white">What happens next:</strong>
-                <ul className="mt-2 space-y-1 text-left max-w-md mx-auto">
-                  <li>• We'll extract and clean up your content</li>
-                  <li>• Convert to professional LaTeX format</li>
-                  <li>• Generate a clean PDF preview</li>
-                  <li>• You can then chat to improve it further</li>
-                </ul>
-              </div>
-
-              <Button 
-                variant="outline" 
-                onClick={onClose}
-                className="w-full border-slate-500 text-slate-200 hover:bg-slate-600 hover:text-white hover:border-slate-400 bg-slate-700/50"
-              >
-                Skip - Start with blank resume
-              </Button>
-            </div>
-          )}
         </div>
+
+        <h2 className="font-display text-2xl font-semibold tracking-tight text-foreground">
+          Turn your resume into reviewable, AI-polished LaTeX
+        </h2>
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+          Drop in your current resume. We extract it, convert it to clean ATS-friendly LaTeX,
+          and let you chat to improve it — every change is yours to accept or reject.
+        </p>
+
+        {isProcessing ? (
+          <div className="mt-7 flex flex-col items-center justify-center rounded-xl border border-border bg-secondary/40 py-14">
+            <div className="h-10 w-10 animate-spin rounded-full border-2 border-accent/30 border-t-accent" />
+            <h3 className="mt-4 text-sm font-semibold text-foreground">Reading your resume…</h3>
+            <p className="mt-1 text-xs text-muted-foreground">Extracting content and generating LaTeX with Claude</p>
+          </div>
+        ) : (
+          <div
+            className={`group mt-7 cursor-pointer rounded-xl border-2 border-dashed p-10 text-center transition-all duration-200 ${
+              isDragging
+                ? 'border-accent bg-accent/10'
+                : 'border-border hover:border-accent/60 hover:bg-secondary/40'
+            }`}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onClick={() => document.getElementById('file-input')?.click()}
+          >
+            <input id="file-input" type="file" accept=".pdf,.docx,.txt" onChange={handleFileInput} className="hidden" />
+            <div className={`mx-auto flex h-12 w-12 items-center justify-center rounded-xl transition-colors ${isDragging ? 'bg-accent text-accent-foreground' : 'bg-secondary text-muted-foreground group-hover:text-foreground'}`}>
+              <Upload className="h-6 w-6" />
+            </div>
+            <h3 className="mt-4 text-base font-semibold text-foreground">Drop your resume here</h3>
+            <p className="mt-0.5 text-sm text-muted-foreground">or click to browse</p>
+            <div className="mt-5 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+              {[{ icon: File, label: 'PDF' }, { icon: FileText, label: 'DOCX' }, { icon: Image, label: 'TXT' }].map(({ icon: Icon, label }) => (
+                <span key={label} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-secondary/50 px-2.5 py-1">
+                  <Icon className="h-3.5 w-3.5" /> {label}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!isProcessing && (
+          <button
+            onClick={onClose}
+            className="mt-5 w-full rounded-lg border border-border py-2.5 text-sm font-medium text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+          >
+            Skip — start with a blank resume
+          </button>
+        )}
       </Card>
     </div>
   );

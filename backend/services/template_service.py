@@ -1,18 +1,23 @@
 """
 Template service for rendering structured resume data to LaTeX
+Produces a clean, single-column, ATS-friendly resume:
+  - prominent centered name + contact line
+  - bold section headings (no decorative rules)
+  - two-line entries with right-aligned dates (\\hfill)
+  - tight, professional spacing
 """
 import re
-from typing import Dict, Any
+from typing import Dict, Any, List
+
 
 class TemplateService:
-    """Service for rendering structured resume data to LaTeX with professional formatting"""
-    
+    """Render structured resume data to professional, ATS-friendly LaTeX."""
+
     def _get_preamble(self) -> str:
-        """Generate clean ATS-friendly LaTeX preamble - simple, no fancy formatting"""
         return r"""\documentclass[11pt,letterpaper]{article}
 
-% ---------- ATS-Friendly Margins ----------
-\usepackage[margin=1in]{geometry}
+% ---------- Margins ----------
+\usepackage[margin=0.65in]{geometry}
 
 % ---------- Links ----------
 \usepackage[hidelinks]{hyperref}
@@ -20,274 +25,247 @@ class TemplateService:
 % ---------- Lists ----------
 \usepackage{enumitem}
 
-% ---------- Simple, clean formatting ----------
+% ---------- Spacing ----------
 \setlength{\parindent}{0pt}
-\setlength{\parskip}{6pt}
-\renewcommand{\baselinestretch}{1.0}
+\setlength{\parskip}{2pt}
+\renewcommand{\baselinestretch}{1.04}
 
-% ATS-friendly section formatting
-\newcommand{\sectiontitle}[1]{\vspace{12pt}\textbf{\large #1}\vspace{6pt}\rule{\textwidth}{0.5pt}\vspace{6pt}}
+% ---------- Section headings: clean bold, no horizontal rules ----------
+\newcommand{\sectiontitle}[1]{\vspace{7pt}{\large\bfseries #1}\par\vspace{3pt}}
 
-% Clean bullets
-\setlist[itemize]{leftmargin=20pt, label=\textbullet, topsep=3pt, itemsep=2pt}
+% ---------- Compact, ATS-friendly bullets ----------
+\setlist[itemize]{leftmargin=15pt, label=\textbullet, topsep=1pt, itemsep=1pt, parsep=0pt, before=\vspace{-2pt}}
 
 """
-    
+
     def __init__(self):
         pass
-    
+
+    # ------------------------------------------------------------------ #
+    # Public entry point
+    # ------------------------------------------------------------------ #
     def render_resume(self, resume_data: Dict[str, Any]) -> str:
-        """
-        Render structured resume data to professional LaTeX format
-        
-        Args:
-            resume_data: Dictionary containing structured resume data
-            
-        Returns:
-            Complete LaTeX document as string
-        """
-        print("🎨 DEBUG: Rendering resume with professional template")
-        
-        # Start with preamble
-        latex_parts = [self._get_preamble()]
-        latex_parts.append("\\begin{document}\n")
-        
-        # Add centered header
-        header_latex = self._render_header(resume_data.get('basics', {}))
-        if header_latex:
-            latex_parts.append(header_latex)
-            latex_parts.append("")  # Blank line after header
-        
-        # Add sections
+        print("🎨 DEBUG: Rendering resume with professional ATS template")
+
+        latex_parts = [self._get_preamble(), "\\begin{document}\n"]
+
+        header = self._render_header(resume_data.get('basics', {}))
+        if header:
+            latex_parts.append(header)
+            latex_parts.append("")
+
         sections = [
-            ('summary', 'Professional Summary'),
-            ('experience', 'Work Experience'),
+            ('summary', 'Summary'),
+            ('experience', 'Experience'),
             ('education', 'Education'),
             ('projects', 'Projects'),
-            ('skills', 'Technical Skills')
+            ('skills', 'Skills'),
         ]
-        
-        for section_key, section_title in sections:
-            section_content = self._render_section(section_key, resume_data.get(section_key, []), section_title)
-            if section_content:
-                latex_parts.append(section_content)
-                latex_parts.append("")  # Blank line after section
-        
+        for key, title in sections:
+            content = self._render_section(key, resume_data.get(key, []), title)
+            if content:
+                latex_parts.append(content)
+                latex_parts.append("")
+
         latex_parts.append("\\end{document}")
-        
         return '\n'.join(latex_parts)
-    
+
+    # ------------------------------------------------------------------ #
+    # Helpers
+    # ------------------------------------------------------------------ #
+    def _row(self, left: str, right: str = "") -> str:
+        """One paragraph: `left` flush-left, `right` flush-right via \\hfill."""
+        left = (left or "").strip()
+        right = (right or "").strip()
+        if left and right:
+            return f"{left} \\hfill {right}\\par"
+        if left:
+            return f"{left}\\par"
+        if right:
+            return f"\\hspace*{{\\fill}}{right}\\par"
+        return ""
+
+    def _dates(self, entry: Dict[str, Any]) -> str:
+        start = self._escape_latex(entry.get('start_date', '') or '')
+        end = self._escape_latex(entry.get('end_date', '') or '')
+        if start and end:
+            return f"{start} -- {end}"
+        return start or end
+
+    # ------------------------------------------------------------------ #
+    # Header
+    # ------------------------------------------------------------------ #
     def _render_header(self, basics: Dict[str, Any]) -> str:
-        """Render simple ATS-friendly header section"""
         if not basics:
             return ""
-        
-        header_parts = []
-        
-        # Name - simple, no fancy formatting
-        if basics.get('name'):
-            header_parts.append(f"\\textbf{{{self._escape_latex(basics['name'])}}}")
-        
-        # Contact info - simple line
-        contact_items = []
-        if basics.get('email'):
-            contact_items.append(self._escape_latex(basics['email']))
-        if basics.get('phone'):
-            contact_items.append(self._escape_latex(basics['phone']))
-        if basics.get('location'):
-            contact_items.append(self._escape_latex(basics['location']))
-        if basics.get('linkedin'):
-            contact_items.append(f"\\href{{{basics['linkedin']}}}{{linkedin.com/in/rohit-sudhakar-ce}}")
-        
-        if contact_items:
-            header_parts.append(" | ".join(contact_items))
-        
-        if header_parts:
-            return "\\begin{center}\n" + " \\\\\n".join(header_parts) + "\n\\end{center}"
-        
-        return ""
-    
-    def _render_section(self, section_key: str, section_data: Any, section_title: str) -> str:
-        """Render a specific section with simple ATS-friendly formatting"""
-        if not section_data:
+
+        lines = ["\\begin{center}"]
+
+        name = self._escape_latex(basics.get('name', '') or '')
+        if name:
+            lines.append(f"{{\\LARGE\\bfseries {name}}}\\\\")
+            lines.append("\\vspace{3pt}")
+
+        contact: List[str] = []
+        for key in ('email', 'phone', 'location'):
+            val = basics.get(key)
+            if val:
+                contact.append(self._escape_latex(val))
+        linkedin = basics.get('linkedin')
+        if linkedin:
+            clean = str(linkedin).strip()
+            url = clean if clean.startswith('http') else f"https://{clean}"
+            contact.append(f"\\href{{{url}}}{{{self._escape_latex(clean)}}}")
+
+        if contact:
+            lines.append(" $|$ ".join(contact))
+
+        lines.append("\\end{center}")
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------ #
+    # Section dispatch
+    # ------------------------------------------------------------------ #
+    def _render_section(self, key: str, data: Any, title: str) -> str:
+        if not data:
             return ""
-        
-        section_parts = [f"\\sectiontitle{{{section_title}}}"]
-        
-        if section_key == 'summary':
-            section_parts.append(self._escape_latex(str(section_data)))
-        elif section_key == 'experience':
-            section_parts.extend(self._render_experience(section_data))
-        elif section_key == 'education':
-            section_parts.extend(self._render_education(section_data))
-        elif section_key == 'projects':
-            section_parts.extend(self._render_projects(section_data))
-        elif section_key == 'skills':
-            section_parts.extend(self._render_skills(section_data))
-        
-        return '\n'.join(section_parts)
-    
+
+        parts = [f"\\sectiontitle{{{title}}}"]
+
+        if key == 'summary':
+            parts.append(self._escape_latex(str(data)))
+        elif key == 'experience':
+            parts.extend(self._render_experience(data))
+        elif key == 'education':
+            parts.extend(self._render_education(data))
+        elif key == 'projects':
+            parts.extend(self._render_projects(data))
+        elif key == 'skills':
+            parts.extend(self._render_skills(data))
+
+        return '\n'.join(p for p in parts if p)
+
+    # ------------------------------------------------------------------ #
+    # Experience
+    # ------------------------------------------------------------------ #
     def _render_experience(self, experience: list) -> list:
-        """Render experience entries with simple ATS-friendly formatting"""
-        if not experience:
-            return []
-        
-        parts = []
+        parts: List[str] = []
         for entry in experience:
             if not entry:
                 continue
-                
-            # Job title and company - separate lines for ATS
-            title = entry.get('title', '')
-            company = entry.get('company', '')
-            if title:
-                parts.append(f"\\textbf{{{self._escape_latex(title)}}}")
-            if company:
-                parts.append(f"\\textbf{{{self._escape_latex(company)}}}")
-            
-            # Dates and location - simple format
-            date_location = []
-            if entry.get('start_date') or entry.get('end_date'):
-                dates = []
-                if entry.get('start_date'):
-                    dates.append(self._escape_latex(entry['start_date']))
-                if entry.get('end_date'):
-                    dates.append(self._escape_latex(entry['end_date']))
-                date_location.append(" - ".join(dates))
-            
-            if entry.get('location'):
-                date_location.append(self._escape_latex(entry['location']))
-            
-            if date_location:
-                parts.append(f"\\textit{{{' | '.join(date_location)}}}")
-            
-            # Bullet points - simple format
-            if entry.get('description'):
-                parts.append("\\begin{itemize}")
-                # Handle both string and list descriptions
-                descriptions = entry['description']
-                if isinstance(descriptions, str):
-                    descriptions = [descriptions]
-                
-                for desc in descriptions:
-                    if desc.strip():
-                        parts.append(f"\\item {self._escape_latex(desc.strip())}")
-                
-                parts.append("\\end{itemize}")
-                parts.append("\\vspace{6pt}")  # Simple spacing after experience entry
-        
+
+            title = self._escape_latex(entry.get('title', '') or '')
+            company = self._escape_latex(entry.get('company', '') or '')
+            location = self._escape_latex(entry.get('location', '') or '')
+            dates = self._dates(entry)
+
+            # Line 1: bold title (left) — dates (right)
+            if title or dates:
+                parts.append(self._row(f"\\textbf{{{title}}}" if title else "", dates))
+            # Line 2: italic company (left) — location (right)
+            if company or location:
+                parts.append(self._row(f"\\textit{{{company}}}" if company else "", location))
+
+            parts.extend(self._bullets(entry.get('description')))
+            parts.append("\\vspace{5pt}")
         return parts
-    
+
+    # ------------------------------------------------------------------ #
+    # Education
+    # ------------------------------------------------------------------ #
     def _render_education(self, education: list) -> list:
-        """Render education entries with simple ATS-friendly formatting"""
-        if not education:
-            return []
-        
-        parts = []
+        parts: List[str] = []
         for entry in education:
             if not entry:
                 continue
-            
-            # School name
-            school = entry.get('school', '')
-            if school:
-                parts.append(f"\\textbf{{{self._escape_latex(school)}}}")
-            
-            # Degree - separate line for ATS
-            if entry.get('degree'):
-                parts.append(f"\\textbf{{{self._escape_latex(entry['degree'])}}}")
-            
-            # Dates - separate line for ATS
-            if entry.get('start_date') or entry.get('end_date'):
-                dates = []
-                if entry.get('start_date'):
-                    dates.append(self._escape_latex(entry['start_date']))
-                if entry.get('end_date'):
-                    dates.append(self._escape_latex(entry['end_date']))
-                if dates:
-                    parts.append(f"\\textit{{{' - '.join(dates)}}}")
-            
-            # GPA and other details
-            if entry.get('gpa'):
-                parts.append(f"GPA: {self._escape_latex(entry['gpa'])}")
-            
+
+            school = self._escape_latex(entry.get('school', '') or '')
+            degree = self._escape_latex(entry.get('degree', '') or '')
+            gpa = self._escape_latex(entry.get('gpa', '') or '')
+            dates = self._dates(entry)
+
+            if school or dates:
+                parts.append(self._row(f"\\textbf{{{school}}}" if school else "", dates))
+
+            right2 = f"GPA: {gpa}" if gpa else ""
+            if degree or right2:
+                parts.append(self._row(f"\\textit{{{degree}}}" if degree else "", right2))
+
             if entry.get('honors'):
-                parts.append(self._escape_latex(entry['honors']))
-            
-            parts.append("\\vspace{6pt}")  # Simple spacing after education entry
-        
+                parts.append(self._row(self._escape_latex(entry['honors'])))
+
+            parts.append("\\vspace{5pt}")
         return parts
-    
+
+    # ------------------------------------------------------------------ #
+    # Projects
+    # ------------------------------------------------------------------ #
     def _render_projects(self, projects: list) -> list:
-        """Render project entries with simple ATS-friendly formatting"""
-        if not projects:
-            return []
-        
-        parts = []
+        parts: List[str] = []
         for project in projects:
             if not project:
                 continue
-            
-            # Project name - separate line for ATS
-            name = project.get('name', '')
-            if name:
-                parts.append(f"\\textbf{{{self._escape_latex(name)}}}")
-            
-            # Tech stack - separate line for ATS
-            tech_stack = project.get('tech_stack', '')
-            if tech_stack:
-                parts.append(f"\\textit{{{self._escape_latex(tech_stack)}}}")
-            
-            # Dates - simple format
-            if project.get('start_date') or project.get('end_date'):
-                dates = []
-                if project.get('start_date'):
-                    dates.append(self._escape_latex(project['start_date']))
-                if project.get('end_date'):
-                    dates.append(self._escape_latex(project['end_date']))
-                if dates:
-                    parts.append(f"\\textit{{{' - '.join(dates)}}}")
-            
-            # Description - simple format
-            if project.get('description'):
-                parts.append("\\begin{itemize}")
-                descriptions = project['description']
-                if isinstance(descriptions, str):
-                    descriptions = [descriptions]
-                
-                for desc in descriptions:
-                    if desc.strip():
-                        parts.append(f"\\item {self._escape_latex(desc.strip())}")
-                
-                parts.append("\\end{itemize}")
-                parts.append("\\vspace{6pt}")  # Simple spacing after project entry
-        
+
+            name = self._escape_latex(project.get('name', '') or '')
+            tech = self._escape_latex(project.get('tech_stack', '') or '')
+            dates = self._dates(project)
+
+            left = f"\\textbf{{{name}}}" if name else ""
+            if tech:
+                left = f"{left} $|$ \\textit{{{tech}}}" if left else f"\\textit{{{tech}}}"
+            if left or dates:
+                parts.append(self._row(left, dates))
+
+            parts.extend(self._bullets(project.get('description')))
+            parts.append("\\vspace{5pt}")
         return parts
-    
+
+    # ------------------------------------------------------------------ #
+    # Skills
+    # ------------------------------------------------------------------ #
     def _render_skills(self, skills: Any) -> list:
-        """Render skills section"""
         if not skills:
             return []
-        
         if isinstance(skills, str):
             return [self._escape_latex(skills)]
-        elif isinstance(skills, list):
-            return [self._escape_latex(" | ".join(skills))]
-        elif isinstance(skills, dict):
-            parts = []
-            for category, skill_list in skills.items():
-                if skill_list:
-                    parts.append(f"{self._escape_latex(category)}: {self._escape_latex(', '.join(skill_list))}")
-            return parts
-        
-        return [str(skills)]
-    
+        if isinstance(skills, list):
+            cleaned = [self._escape_latex(s) for s in skills if str(s).strip()]
+            return [", ".join(cleaned)] if cleaned else []
+        if isinstance(skills, dict):
+            rows = []
+            for category, items in skills.items():
+                if not items:
+                    continue
+                if isinstance(items, (list, tuple)):
+                    items = ", ".join(str(i) for i in items)
+                rows.append(f"\\textbf{{{self._escape_latex(category)}:}} {self._escape_latex(items)}\\par")
+            return rows
+        return [self._escape_latex(str(skills))]
+
+    # ------------------------------------------------------------------ #
+    # Bullets
+    # ------------------------------------------------------------------ #
+    def _bullets(self, description: Any) -> list:
+        if not description:
+            return []
+        items = description
+        if isinstance(items, str):
+            items = [items]
+        cleaned = [d.strip() for d in items if str(d).strip()]
+        if not cleaned:
+            return []
+        out = ["\\begin{itemize}"]
+        for d in cleaned:
+            out.append(f"\\item {self._escape_latex(d)}")
+        out.append("\\end{itemize}")
+        return out
+
+    # ------------------------------------------------------------------ #
+    # Escaping
+    # ------------------------------------------------------------------ #
     def _escape_latex(self, text: str) -> str:
-        """Escape special LaTeX characters in user text"""
         if not text:
             return ""
-        
-        # Escape special characters
         text = str(text)
         text = text.replace('\\', '\\textbackslash ')
         text = text.replace('{', '\\{')
@@ -299,5 +277,4 @@ class TemplateService:
         text = text.replace('^', '\\textasciicircum ')
         text = text.replace('_', '\\_')
         text = text.replace('~', '\\textasciitilde ')
-        
         return text
