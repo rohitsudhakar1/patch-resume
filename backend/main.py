@@ -1424,20 +1424,13 @@ Remember: You're having a natural conversation. Be helpful, concise, and proacti
                         resume_data = None
                         explanation = ""
                     else:
+                        # The candidate passed the compile gate, but it is NOT
+                        # persisted here. It goes back to the user as a proposal;
+                        # the frontend applies it via /project/recreate only after
+                        # the user explicitly approves. Model proposes, gate
+                        # validates, human approves.
                         is_resume_update = True
-
-                        # Update project in backend
-                        if project_id not in projects:
-                            projects[project_id] = {
-                                'id': project_id,
-                                'resume_tex': resume_data,
-                                'created_at': datetime.now().isoformat()
-                            }
-                        else:
-                            projects[project_id]['resume_tex'] = resume_data
-
-                        save_projects()
-                        print(f"✅ DEBUG: Resume updated via direct AI edit")
+                        print(f"✅ DEBUG: Validated candidate returned for user approval")
         except json.JSONDecodeError as e:
             print(f"⚠️ DEBUG: No JSON update found in response: {e}")
         except Exception as e:
@@ -1456,6 +1449,7 @@ Remember: You're having a natural conversation. Be helpful, concise, and proacti
             "response": response_text,
             "is_resume_update": is_resume_update,
             "resume_data": resume_data,
+            "requires_approval": is_resume_update,
             "explanation": explanation,
             "timestamp": datetime.now().isoformat()
         }

@@ -1,13 +1,20 @@
 import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Send, Sparkles, Briefcase, X } from 'lucide-react';
+import { Send, Sparkles, Briefcase, X, Check } from 'lucide-react';
+
+interface Proposal {
+  latex: string;
+  status: 'pending' | 'applied' | 'discarded';
+}
 
 interface Message {
   id: string;
   type: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  // A validated resume update awaiting the user's explicit approval.
+  proposal?: Proposal;
 }
 
 export const ChatPanel = () => {
@@ -84,6 +91,48 @@ export const ChatPanel = () => {
     setJdOpen(false);
   };
 
+  // Apply a validated proposal: sync the backend first (the PDF endpoint
+  // compiles from backend state), then update local state and notify.
+  const applyProposal = async (messageId: string) => {
+    const msg = messages.find(m => m.id === messageId);
+    if (!msg?.proposal || msg.proposal.status !== 'pending') return;
+
+    const projectData = sessionStorage.getItem('currentProject');
+    const currentProject = projectData ? JSON.parse(projectData) : null;
+    if (!currentProject) return;
+
+    const updatedProject = {
+      ...currentProject,
+      resume_tex: msg.proposal.latex,
+      last_updated: new Date().toISOString(),
+      last_description: 'Applied chat edit'
+    };
+
+    try {
+      await fetch('http://localhost:8000/project/recreate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedProject),
+      });
+      sessionStorage.setItem('currentProject', JSON.stringify(updatedProject));
+      window.dispatchEvent(new CustomEvent('projectUpdated', { detail: updatedProject }));
+      setMessages(prev => prev.map(m =>
+        m.id === messageId && m.proposal ? { ...m, proposal: { ...m.proposal, status: 'applied' } } : m
+      ));
+      console.log('✅ Proposal applied by user');
+    } catch (error) {
+      console.error('❌ Failed to apply proposal:', error);
+    }
+  };
+
+  const discardProposal = (messageId: string) => {
+    setMessages(prev => prev.map(m =>
+      m.id === messageId && m.proposal?.status === 'pending'
+        ? { ...m, proposal: { ...m.proposal, status: 'discarded' } } : m
+    ));
+    console.log('🗑️ Proposal discarded — resume unchanged');
+  };
+
   // Core send routine. `message` is what's sent to the model; `displayText`
   // (optional) is what's shown in the chat bubble (used for long JD pastes).
   const sendMessage = async (message: string, displayText?: string) => {
@@ -137,31 +186,20 @@ export const ChatPanel = () => {
 
       const data = await response.json();
 
-      // Display AI response
+      // Display AI response. A validated resume update arrives as a PROPOSAL —
+      // nothing is applied until the user clicks Apply (human approval layer).
+      const hasProposal = data.is_resume_update && data.resume_data;
       const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
         type: 'assistant',
         content: (data.response && data.response.trim()) || data.explanation || 'Done.',
-        timestamp: new Date()
+        timestamp: new Date(),
+        ...(hasProposal ? { proposal: { latex: data.resume_data, status: 'pending' as const } } : {})
       };
       setMessages(prev => [...prev, aiMessage]);
 
-      // Handle resume updates (direct LaTeX from AI)
-      if (data.is_resume_update && data.resume_data) {
-        console.log('✅ Resume updated by AI (' + data.resume_data.length + ' chars)');
-
-        if (currentProject) {
-          const updatedProject = {
-            ...currentProject,
-            resume_tex: data.resume_data,
-            last_updated: new Date().toISOString()
-          };
-          sessionStorage.setItem('currentProject', JSON.stringify(updatedProject));
-
-          // Notify other components of the update
-          window.dispatchEvent(new CustomEvent('projectUpdated', { detail: updatedProject }));
-          console.log('📤 Notified components of resume update');
-        }
+      if (hasProposal) {
+        console.log('📋 Validated proposal received (' + data.resume_data.length + ' chars) — awaiting approval');
       }
 
     } catch (error) {
@@ -237,6 +275,42 @@ export const ChatPanel = () => {
                  </div>
                ) : (
                  message.content
+               )}
+               {message.proposal && (
+                 <div className="mt-3 border-t border-slate-600/50 pt-2.5" data-testid="proposal-controls">
+                   {message.proposal.status === 'pending' && (
+                     <div className="flex items-center gap-2">
+                       <Button
+                         size="sm"
+                         onClick={() => applyProposal(message.id)}
+                         className="h-8 rounded-md bg-gradient-to-r from-cyan-600 to-blue-600 px-3 text-xs font-semibold text-white transition hover:opacity-90"
+                         data-testid="apply-proposal"
+                       >
+                         <Check className="mr-1 h-3.5 w-3.5" /> Apply change
+                       </Button>
+                       <Button
+                         size="sm"
+                         variant="outline"
+                         onClick={() => discardProposal(message.id)}
+                         className="h-8 rounded-md border-slate-500/60 bg-transparent px-3 text-xs font-medium text-slate-300 transition hover:bg-slate-700/60 hover:text-slate-100"
+                         data-testid="discard-proposal"
+                       >
+                         <X className="mr-1 h-3.5 w-3.5" /> Discard
+                       </Button>
+                       <span className="text-[11px] text-slate-400">Validated · not yet applied</span>
+                     </div>
+                   )}
+                   {message.proposal.status === 'applied' && (
+                     <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-400" data-testid="proposal-applied">
+                       <Check className="h-3.5 w-3.5" /> Applied to your resume
+                     </span>
+                   )}
+                   {message.proposal.status === 'discarded' && (
+                     <span className="flex items-center gap-1.5 text-xs font-medium text-slate-400" data-testid="proposal-discarded">
+                       <X className="h-3.5 w-3.5" /> Discarded — resume unchanged
+                     </span>
+                   )}
+                 </div>
                )}
             </div>
           </div>

@@ -47,7 +47,7 @@ npm run lint         # ESLint
 
 1. **Ingest pipeline** (`/ingest`): extract text (`extract_text_from_file`) → Claude parses it into a **fixed JSON schema** (`convert_to_latex_with_chat`) → deterministic template renders LaTeX (`template_service.render_resume`). The model never writes the initial LaTeX freehand — AI for understanding, code for formatting. If AI parsing fails, `CleanParseService` (regex-only) fills the same schema.
 
-2. **Validate + auto-repair** (`fix_compilation_errors`, used by `/llm/chat`): every AI edit is test-compiled; on failure the **real compiler error** is sent back to Claude for repair, up to 3 attempts. Returns `(latex, compiled_ok)` — on `compiled_ok=False` the edit is **rejected and not persisted** (fail closed), and the user is told nothing was changed.
+2. **Validate + auto-repair** (`fix_compilation_errors`, used by `/llm/chat`): every AI edit is test-compiled; on failure the **real compiler error** is sent back to Claude for repair, up to 3 attempts. Returns `(latex, compiled_ok)` — on `compiled_ok=False` the edit is **rejected** (fail closed) and the user is told nothing was changed. On success the candidate is **returned as a proposal, not persisted**: the frontend shows Apply/Discard buttons, and only an explicit Apply persists it (via `/project/recreate`). Model proposes → gate validates → human approves.
 
 3. **Fit to one page** (`/llm/fit-one-page`): compile → count pages with PyPDF2 → if >1, ask Claude to condense (tighten wording first, then drop weakest content, then shrink spacing; bullets stay atomic) → recompile → repeat, cap 5 iterations. The exit condition is the **measured page count**, never the model's own claim. Keeps the last compiling draft; never persists a non-compiling one.
 
@@ -66,7 +66,7 @@ A static scrubber run before every compile: removes known corruption (the `ewcom
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/ingest` | Upload resume → extract → AI parse to JSON → template → project |
-| `POST` | `/llm/chat` | Natural-language edit; whole-document rewrite validated by the compile gate (fail-closed) |
+| `POST` | `/llm/chat` | Natural-language edit; whole-document rewrite validated by the compile gate (fail-closed), returned as a proposal for explicit user approval |
 | `POST` | `/llm/fit-one-page` | Compile → count pages → condense loop until exactly 1 page |
 | `POST` | `/llm/patch` | Legacy line-diff change generation (not the primary UI flow) |
 | `POST` | `/changes/apply` | Legacy — accepts change list (stub) |
@@ -78,7 +78,7 @@ A static scrubber run before every compile: removes known corruption (the `ewcom
 ### Frontend (`src/components/`)
 
 - **`ResumeEditor.tsx`** — orchestrator; owns `currentProject`, mirrors it to `sessionStorage`, undo/redo via `useVersionHistory` (every change is snapshotted — this is the human-approval layer).
-- **`ChatPanel.tsx`** — chat UI; **Tailor-to-JD lives here** as a canned instruction sent through `/llm/chat` (a feature that is purely a new prompt on existing rails).
+- **`ChatPanel.tsx`** — chat UI; renders validated edits as **proposals with Apply/Discard buttons** (Apply syncs the backend via `/project/recreate`, then fires `projectUpdated`). **Tailor-to-JD lives here** as a canned instruction sent through `/llm/chat` (a feature that is purely a new prompt on existing rails).
 - **`PDFViewer.tsx`** — always-mounted iframe (unmounting it deadlocked the loading state historically) with cache-busted URLs; a PDF request is what triggers backend compilation.
 - **`LaTeXEditor.tsx`** — manual editing; syncs to backend via `/project/recreate`.
 - Components communicate via `window` CustomEvents (`projectUpdated`, `pdfRegenerate`) — no global state library.
@@ -87,6 +87,7 @@ A static scrubber run before every compile: removes known corruption (the `ewcom
 
 - **Always clean LaTeX before compiling** (`clean_latex_content`), and always compile before persisting AI output.
 - **The gate fails closed**: never store a document that didn't compile. `fit_one_page` reverts to `last_good`; `/llm/chat` rejects the edit and says so.
+- **Chat edits require explicit human approval**: `/llm/chat` never persists — the validated candidate is applied only when the user clicks Apply in the chat panel.
 - **Hard gates vs. soft guardrails**: "it compiles" and "it's one page" are hard, deterministic checks. "Stay truthful, don't invent experience" is a prompt-level guardrail plus human review — do not confuse the two.
 - **Never fabricate resume content anywhere**, including fallback parsers — blank is honest, invented is not.
 - Test compiles use suffixed project IDs (`{id}_test`, `{id}_fit`) so they never clobber the served PDF.
