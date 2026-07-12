@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Send, Sparkles, Briefcase, X, Check } from 'lucide-react';
+import { Send, Sparkles, Briefcase, X, Check, CheckCircle2, FileCheck2 } from 'lucide-react';
 
 interface Proposal {
   latex: string;
@@ -326,38 +326,64 @@ export const ChatPanel = () => {
                  message.content
                )}
                {message.proposal && (
-                 <div className="mt-3 border-t border-slate-600/50 pt-2.5" data-testid="proposal-controls">
+                 <div className="mt-3" data-testid="proposal-controls">
                    {message.proposal.status === 'pending' && (
-                     <div className="flex items-center gap-2">
-                       <Button
-                         size="sm"
-                         onClick={() => applyProposal(message.id)}
-                         className="h-8 rounded-md bg-gradient-to-r from-cyan-600 to-blue-600 px-3 text-xs font-semibold text-white transition hover:opacity-90"
-                         data-testid="apply-proposal"
-                       >
-                         <Check className="mr-1 h-3.5 w-3.5" /> Apply change
-                       </Button>
-                       <Button
-                         size="sm"
-                         variant="outline"
-                         onClick={() => discardProposal(message.id)}
-                         className="h-8 rounded-md border-slate-500/60 bg-transparent px-3 text-xs font-medium text-slate-300 transition hover:bg-slate-700/60 hover:text-slate-100"
-                         data-testid="discard-proposal"
-                       >
-                         <X className="mr-1 h-3.5 w-3.5" /> Discard
-                       </Button>
-                       <span className="text-[11px] text-slate-400">Validated · not yet applied</span>
+                     <div className="overflow-hidden rounded-lg border border-amber-400/30 bg-amber-400/[0.06]">
+                       {/* Status header: what stage of the pipeline this is at */}
+                       <div className="flex items-center justify-between gap-2 border-b border-amber-400/20 px-3 py-2">
+                         <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-300/90">
+                           Proposed change
+                         </span>
+                         <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+                           <FileCheck2 className="h-3 w-3" /> Compiles
+                         </span>
+                       </div>
+                       <div className="space-y-2.5 px-3 py-2.5">
+                         <p className="text-[11px] leading-relaxed text-slate-400">
+                           Previewing in the PDF pane — blue text is what changes. Your resume stays untouched until you apply.
+                         </p>
+                         <div className="flex items-center gap-2">
+                           <Button
+                             size="sm"
+                             onClick={() => applyProposal(message.id)}
+                             className="h-8 flex-1 rounded-md bg-gradient-to-r from-cyan-600 to-blue-600 px-3 text-xs font-semibold text-white shadow-sm transition hover:opacity-90"
+                             data-testid="apply-proposal"
+                           >
+                             <Check className="mr-1.5 h-3.5 w-3.5" /> Apply change
+                           </Button>
+                           <Button
+                             size="sm"
+                             variant="outline"
+                             onClick={() => discardProposal(message.id)}
+                             className="h-8 rounded-md border-slate-500/50 bg-transparent px-3 text-xs font-medium text-slate-400 transition hover:border-slate-400/60 hover:bg-slate-700/50 hover:text-slate-200"
+                             data-testid="discard-proposal"
+                           >
+                             <X className="mr-1.5 h-3.5 w-3.5" /> Discard
+                           </Button>
+                         </div>
+                       </div>
                      </div>
                    )}
                    {message.proposal.status === 'applied' && (
-                     <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-400" data-testid="proposal-applied">
-                       <Check className="h-3.5 w-3.5" /> Applied to your resume
-                     </span>
+                     <div
+                       className="flex items-center gap-2 rounded-lg border border-emerald-400/25 bg-emerald-400/[0.07] px-3 py-2"
+                       data-testid="proposal-applied"
+                     >
+                       <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                       <div className="leading-tight">
+                         <p className="text-xs font-medium text-emerald-300">Applied to your resume</p>
+                         <p className="text-[10px] text-slate-500">Saved to version history — undo anytime</p>
+                       </div>
+                     </div>
                    )}
                    {message.proposal.status === 'discarded' && (
-                     <span className="flex items-center gap-1.5 text-xs font-medium text-slate-400" data-testid="proposal-discarded">
-                       <X className="h-3.5 w-3.5" /> Discarded — resume unchanged
-                     </span>
+                     <div
+                       className="flex items-center gap-2 rounded-lg border border-slate-600/40 bg-slate-700/20 px-3 py-2"
+                       data-testid="proposal-discarded"
+                     >
+                       <X className="h-4 w-4 shrink-0 text-slate-500" />
+                       <p className="text-xs font-medium text-slate-400">Discarded — resume unchanged</p>
+                     </div>
                    )}
                  </div>
                )}
