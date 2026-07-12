@@ -1656,21 +1656,28 @@ Current LaTeX:
             print(f"❌ ERROR: fit-one-page condense failed: {e}")
             break
 
-    # Fail closed: never persist a draft that doesn't compile.
+    # Fail closed: never return a draft that doesn't compile.
     if not success and last_good:
         print("⚠️ DEBUG: final draft didn't compile; reverting to last compiling version")
         latex = last_good
 
-    project["resume_tex"] = latex
-    project["last_updated"] = datetime.utcnow().isoformat()
-    projects[project_id] = project
-    save_projects()
+    # Like chat edits, the condensed draft is a PROPOSAL — nothing is persisted
+    # here. The frontend shows it (with a highlighted preview) and only an
+    # explicit Apply stores it via /project/recreate.
+    original = request.get('resume') or project.get('resume_tex', '')
+    changed = latex.strip() != original.strip()
+    preview_ready = False
+    if changed:
+        preview_ready = _compile_proposal_preview(project_id, original, latex)
 
     return {
         "resume_tex": latex,
         "pages": pages,
         "fit": pages == 1,
         "iterations": iterations,
+        "changed": changed,
+        "requires_approval": changed,
+        "preview_available": preview_ready,
     }
 
 

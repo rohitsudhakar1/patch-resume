@@ -178,17 +178,21 @@ export const ResumeEditor = () => {
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
-      if (data.resume_tex) {
-        const updated = {
-          ...currentProject,
-          resume_tex: data.resume_tex,
-          last_updated: new Date().toISOString(),
-          last_description: data.fit ? 'Fit to one page' : 'Condensed (best effort)',
-        };
-        sessionStorage.setItem('currentProject', JSON.stringify(updated));
-        setCurrentProject(updated);
-        saveVersion(data.resume_tex, updated.last_description);
-        window.dispatchEvent(new CustomEvent('projectUpdated', { detail: updated }));
+      if (data.resume_tex && data.changed) {
+        // Route through the approval flow: ChatPanel renders the condensed
+        // draft as a proposal with Apply/Discard + highlighted preview.
+        window.dispatchEvent(new CustomEvent('fitProposal', {
+          detail: {
+            latex: data.resume_tex,
+            pages: data.pages,
+            fit: data.fit,
+            iterations: data.iterations,
+            previewAvailable: data.preview_available,
+            projectId: currentProject.id,
+          },
+        }));
+      } else {
+        window.dispatchEvent(new CustomEvent('fitNoChange', { detail: { pages: data.pages } }));
       }
     } catch (e) {
       console.error('❌ Fit-to-one-page failed:', e);

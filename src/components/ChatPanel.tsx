@@ -58,6 +58,42 @@ export const ChatPanel = () => {
     }
   }, [messages.length]);
 
+  // Fit-to-one-page results arrive as proposals too (same approval flow).
+  useEffect(() => {
+    const onFitProposal = (e: Event) => {
+      const d = (e as CustomEvent).detail || {};
+      if (!d.latex) return;
+      const passes = `${d.iterations} pass${d.iterations === 1 ? '' : 'es'}`;
+      const msg: Message = {
+        id: Date.now().toString(),
+        type: 'assistant',
+        content: d.fit
+          ? `Condensed your resume to one page in ${passes}. Review the highlighted preview and apply if it looks right.`
+          : `Best effort: reached ${d.pages ?? '?'} pages after ${passes}. Review the preview and decide.`,
+        timestamp: new Date(),
+        proposal: { latex: d.latex, status: 'pending' }
+      };
+      setMessages(prev => [...prev, msg]);
+      if (d.previewAvailable && d.projectId) {
+        window.dispatchEvent(new CustomEvent('proposalPreview', { detail: { projectId: d.projectId } }));
+      }
+    };
+    const onFitNoChange = () => {
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        type: 'assistant',
+        content: 'Your resume already fits on one page — nothing to change.',
+        timestamp: new Date()
+      }]);
+    };
+    window.addEventListener('fitProposal', onFitProposal);
+    window.addEventListener('fitNoChange', onFitNoChange);
+    return () => {
+      window.removeEventListener('fitProposal', onFitProposal);
+      window.removeEventListener('fitNoChange', onFitNoChange);
+    };
+  }, []);
+
   // Handle Enter key press
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
