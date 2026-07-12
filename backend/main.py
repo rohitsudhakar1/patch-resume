@@ -1327,6 +1327,11 @@ WHEN USER ASKS QUESTIONS OR WANTS ADVICE:
 - No JSON response needed for pure conversation
 
 LATEX EDITING RULES:
+- MINIMAL EDIT (critical): change ONLY what the user explicitly asked for.
+  Everything else — the preamble, document class, font size, margins, spacing
+  commands, section order, and all untouched content — must remain
+  character-for-character identical to the current resume. Never reformat,
+  rescale, or "improve" anything that wasn't requested.
 - Preserve document structure and formatting
 - Maintain professional ATS-friendly layout
 - Use strong action verbs and quantifiable metrics
@@ -1391,6 +1396,7 @@ Remember: You're having a natural conversation. Be helpful, concise, and proacti
         # Parse AI response for LaTeX updates
         is_resume_update = False
         update_rejected = False
+        preview_ready = False
         resume_data = None
         explanation = ""
 
@@ -1430,7 +1436,10 @@ Remember: You're having a natural conversation. Be helpful, concise, and proacti
                         # the user explicitly approves. Model proposes, gate
                         # validates, human approves.
                         is_resume_update = True
-                        print(f"✅ DEBUG: Validated candidate returned for user approval")
+                        # Compile a preview with the changed lines highlighted so
+                        # the user can see exactly what they're approving.
+                        preview_ready = _compile_proposal_preview(project_id, current_resume or "", resume_data)
+                        print(f"✅ DEBUG: Validated candidate returned for user approval (preview={preview_ready})")
         except json.JSONDecodeError as e:
             print(f"⚠️ DEBUG: No JSON update found in response: {e}")
         except Exception as e:
@@ -1450,6 +1459,7 @@ Remember: You're having a natural conversation. Be helpful, concise, and proacti
             "is_resume_update": is_resume_update,
             "resume_data": resume_data,
             "requires_approval": is_resume_update,
+            "preview_available": preview_ready,
             "explanation": explanation,
             "timestamp": datetime.now().isoformat()
         }
@@ -1459,6 +1469,92 @@ Remember: You're having a natural conversation. Be helpful, concise, and proacti
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+
+
+def _build_highlighted_preview(original: str, candidate: str) -> str:
+    """Return candidate LaTeX with the changed body lines colored, so the
+    user can SEE what a proposal touches before approving it.
+
+    The diff is computed deterministically (difflib) — never trusted from
+    the model. Structural lines (preamble, \\begin/\\end, comments) are left
+    untouched; only changed content lines get wrapped. If this decorated
+    document fails to compile, the caller falls back to the plain candidate.
+    """
+    import difflib
+
+    orig_lines = original.splitlines()
+    cand_lines = candidate.splitlines()
+    out = list(cand_lines)
+
+    body_start = next((i for i, l in enumerate(cand_lines) if '\\begin{document}' in l), 0)
+    structural = ('\\documentclass', '\\usepackage', '\\begin', '\\end',
+                  '\\newcommand', '\\renewcommand', '\\definecolor',
+                  '\\pagestyle', '\\hypersetup', '\\setlist', '%')
+
+    changed = set()
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, orig_lines, cand_lines).get_opcodes():
+        if tag in ('replace', 'insert'):
+            changed.update(range(j1, j2))
+
+    def wrap(line: str) -> str:
+        stripped = line.strip()
+        if not stripped or any(stripped.startswith(s) for s in structural):
+            return line
+        indent = line[:len(line) - len(line.lstrip())]
+        if stripped.startswith('\\item'):
+            rest = stripped[len('\\item'):].strip()
+            if not rest:
+                return line
+            return f"{indent}\\item \\textcolor{{ProposalHighlight}}{{{rest}}}"
+        return f"{indent}\\textcolor{{ProposalHighlight}}{{{stripped}}}"
+
+    for j in sorted(changed):
+        if j > body_start:
+            out[j] = wrap(out[j])
+
+    tex = "\n".join(out)
+    # xcolor may not be in the preamble; inject it right after \documentclass.
+    inject = "\\usepackage{xcolor}\n\\definecolor{ProposalHighlight}{RGB}{0,102,204}\n"
+    idx = tex.find('\n', tex.find('\\documentclass'))
+    if idx != -1:
+        tex = tex[:idx + 1] + inject + tex[idx + 1:]
+    return tex
+
+
+def _compile_proposal_preview(project_id: str, original: str, candidate: str) -> bool:
+    """Compile a highlighted preview of a validated candidate to
+    resume_{project_id}_preview.pdf. Falls back to the plain candidate if the
+    decorated version doesn't compile. Returns True if a preview PDF exists."""
+    preview_id = f"{project_id}_preview"
+    try:
+        decorated = _build_highlighted_preview(original, candidate)
+        ok, _, _ = compile_service.compile_latex(decorated, preview_id)
+        if ok:
+            print("🖍️ DEBUG: Highlighted proposal preview compiled")
+            return True
+        print("⚠️ DEBUG: Highlighted preview failed; falling back to plain candidate")
+        ok, _, _ = compile_service.compile_latex(candidate, preview_id)
+        return ok
+    except Exception as e:
+        print(f"⚠️ DEBUG: Preview build failed: {e}")
+        try:
+            ok, _, _ = compile_service.compile_latex(candidate, preview_id)
+            return ok
+        except Exception:
+            return False
+
+
+@app.get("/artifact/pdf-preview/{project_id}")
+async def get_proposal_preview(project_id: str):
+    """Serve the compiled preview of a pending proposal (highlighted changes)."""
+    pdf_path = os.path.join(os.getcwd(), 'temp_latex', f'resume_{project_id}_preview.pdf')
+    if not os.path.exists(pdf_path):
+        raise HTTPException(status_code=404, detail="No pending proposal preview")
+    return FileResponse(
+        pdf_path,
+        media_type='application/pdf',
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"},
+    )
 
 
 def _count_pdf_pages(pdf_path: str):

@@ -130,6 +130,10 @@ export const ChatPanel = () => {
       m.id === messageId && m.proposal?.status === 'pending'
         ? { ...m, proposal: { ...m.proposal, status: 'discarded' } } : m
     ));
+    // Snap the PDF pane back to the current (unchanged) document.
+    const projectData = sessionStorage.getItem('currentProject');
+    const pid = projectData ? JSON.parse(projectData).id : undefined;
+    window.dispatchEvent(new CustomEvent('proposalPreviewEnd', { detail: { projectId: pid } }));
     console.log('🗑️ Proposal discarded — resume unchanged');
   };
 
@@ -200,6 +204,10 @@ export const ChatPanel = () => {
 
       if (hasProposal) {
         console.log('📋 Validated proposal received (' + data.resume_data.length + ' chars) — awaiting approval');
+        // Switch the PDF pane to the highlighted preview of this proposal.
+        if (data.preview_available && currentProject?.id) {
+          window.dispatchEvent(new CustomEvent('proposalPreview', { detail: { projectId: currentProject.id } }));
+        }
       }
 
     } catch (error) {

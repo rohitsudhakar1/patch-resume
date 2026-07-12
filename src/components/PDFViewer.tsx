@@ -16,11 +16,15 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ project }) => {
   const [pdfError, setPdfError] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
+  // True while the pane is showing a pending proposal (highlighted changes).
+  const [isProposalPreview, setIsProposalPreview] = useState(false);
 
   // Listen for project updates to force PDF regeneration
   useEffect(() => {
     const handleProjectUpdate = (event: CustomEvent) => {
       console.log('📥 DEBUG: PDFViewer received project update event');
+
+      setIsProposalPreview(false); // an applied update always exits preview mode
 
       if (event.detail && event.detail.id) {
         // Update the project state with the new data
@@ -61,11 +65,39 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ project }) => {
       }
     };
 
+    // A pending proposal: show its highlighted preview PDF (compiled by the
+    // backend from a deterministic diff). Nothing is applied yet.
+    const handleProposalPreview = (event: CustomEvent) => {
+      const pid = event.detail?.projectId || project?.id;
+      if (!pid) return;
+      console.log('🖍️ DEBUG: Showing proposal preview for', pid);
+      setPdfUrl(`http://localhost:8000/artifact/pdf-preview/${pid}?t=${Date.now()}`);
+      setIsProposalPreview(true);
+      setIsLoading(true);
+      setPdfError(false);
+    };
+
+    // Proposal discarded: snap back to the current document.
+    const handleProposalPreviewEnd = (event: CustomEvent) => {
+      const pid = event.detail?.projectId || project?.id;
+      setIsProposalPreview(false);
+      if (pid) {
+        console.log('↩️ DEBUG: Proposal dismissed, reverting preview to current document');
+        setPdfUrl(`http://localhost:8000/artifact/pdf/${pid}?t=${Date.now()}`);
+        setIsLoading(true);
+        setPdfError(false);
+      }
+    };
+
     window.addEventListener('projectUpdated', handleProjectUpdate as EventListener);
     window.addEventListener('pdfRegenerate', handlePdfRegenerate as EventListener);
+    window.addEventListener('proposalPreview', handleProposalPreview as EventListener);
+    window.addEventListener('proposalPreviewEnd', handleProposalPreviewEnd as EventListener);
     return () => {
       window.removeEventListener('projectUpdated', handleProjectUpdate as EventListener);
       window.removeEventListener('pdfRegenerate', handlePdfRegenerate as EventListener);
+      window.removeEventListener('proposalPreview', handleProposalPreview as EventListener);
+      window.removeEventListener('proposalPreviewEnd', handleProposalPreviewEnd as EventListener);
     };
   }, [project?.id]);
 
@@ -143,12 +175,26 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ project }) => {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <span className="flex h-2 w-2 items-center justify-center">
-              <span className={`h-2 w-2 rounded-full ${isLoading ? 'animate-pulse bg-accent' : pdfError ? 'bg-destructive' : 'bg-emerald-400'}`} />
+              <span className={`h-2 w-2 rounded-full ${isProposalPreview ? 'animate-pulse bg-amber-400' : isLoading ? 'animate-pulse bg-accent' : pdfError ? 'bg-destructive' : 'bg-emerald-400'}`} />
             </span>
             <div>
-              <h2 className="text-sm font-semibold text-foreground leading-tight">Live Preview</h2>
-              <p className="text-xs text-muted-foreground">{isLoading ? 'Compiling…' : pdfError ? 'Needs attention' : 'Up to date'}</p>
+              <h2 className="text-sm font-semibold text-foreground leading-tight">
+                {isProposalPreview ? 'Proposed change' : 'Live Preview'}
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                {isProposalPreview
+                  ? 'Blue text = what changes · not applied yet'
+                  : isLoading ? 'Compiling…' : pdfError ? 'Needs attention' : 'Up to date'}
+              </p>
             </div>
+            {isProposalPreview && (
+              <span
+                className="ml-2 rounded-full border border-amber-400/40 bg-amber-400/10 px-2.5 py-0.5 text-[11px] font-medium text-amber-300"
+                data-testid="preview-banner"
+              >
+                Awaiting your approval
+              </span>
+            )}
           </div>
           {pdfError && (
             <button

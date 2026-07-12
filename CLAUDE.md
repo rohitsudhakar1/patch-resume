@@ -67,6 +67,7 @@ A static scrubber run before every compile: removes known corruption (the `ewcom
 |--------|----------|-------------|
 | `POST` | `/ingest` | Upload resume → extract → AI parse to JSON → template → project |
 | `POST` | `/llm/chat` | Natural-language edit; whole-document rewrite validated by the compile gate (fail-closed), returned as a proposal for explicit user approval |
+| `GET` | `/artifact/pdf-preview/{id}` | Compiled preview of the pending proposal with changed lines highlighted (diff computed deterministically via difflib) |
 | `POST` | `/llm/fit-one-page` | Compile → count pages → condense loop until exactly 1 page |
 | `POST` | `/llm/patch` | Legacy line-diff change generation (not the primary UI flow) |
 | `POST` | `/changes/apply` | Legacy — accepts change list (stub) |
