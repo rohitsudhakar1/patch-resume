@@ -729,20 +729,26 @@ def apply_changes_to_latex(latex_content: str, changes: list) -> str:
     
     return result
 
-def fix_compilation_errors(latex_content: str, original_request: str, project_id: str, max_attempts: int = 3) -> str:
-    """Fix LaTeX compilation errors by sending failed code back to AI"""
+def fix_compilation_errors(latex_content: str, original_request: str, project_id: str, max_attempts: int = 3) -> tuple[str, bool]:
+    """Validate LaTeX by compiling it; on failure, send the compiler error
+    back to the AI for repair (up to max_attempts).
+
+    Returns (latex, compiled_ok). Callers must treat compiled_ok=False as a
+    rejected proposal and keep their last-known-good content — the gate
+    fails closed.
+    """
     if not latex_content:
-        return latex_content
-    
+        return latex_content, False
+
     for attempt in range(max_attempts):
         print(f" DEBUG: Testing compilation (attempt {attempt + 1}/{max_attempts})")
-        
+
         # Test compilation
         success, pdf_path, error_msg = compile_service.compile_latex(latex_content, f"{project_id}_test")
-        
+
         if success:
             print(f"DEBUG: LaTeX compiles successfully")
-            return latex_content
+            return latex_content, True
         
         print(f"DEBUG: Compilation failed: {error_msg}")
         
@@ -784,10 +790,10 @@ Please provide the corrected LaTeX code that will compile without errors. Return
                 print(f"❌ DEBUG: AI fix attempt failed: {e}")
                 break
         else:
-            print(f"❌ DEBUG: Max attempts reached, returning original content")
+            print(f"❌ DEBUG: Max attempts reached, rejecting the edit")
             break
-    
-    return latex_content
+
+    return latex_content, False
 
 def clean_text_content(text_content: str) -> str:
     """Clean and normalize text content to remove unwanted characters and sequences"""
@@ -1384,6 +1390,7 @@ Remember: You're having a natural conversation. Be helpful, concise, and proacti
 
         # Parse AI response for LaTeX updates
         is_resume_update = False
+        update_rejected = False
         resume_data = None
         explanation = ""
 
@@ -1397,7 +1404,6 @@ Remember: You're having a natural conversation. Be helpful, concise, and proacti
                 update_data = json.loads(json_str)
 
                 if update_data.get('action') == 'update_resume' and update_data.get('updated_latex'):
-                    is_resume_update = True
                     resume_data = update_data['updated_latex']
                     explanation = update_data.get('explanation', '')
 
@@ -1406,22 +1412,32 @@ Remember: You're having a natural conversation. Be helpful, concise, and proacti
                     if was_cleaned:
                         print(f"🧹 DEBUG: Cleaned AI-generated LaTeX ({len(issues)} issues fixed)")
 
-                    # Test compilation and fix errors
+                    # Validation gate: the edit must compile (with AI repair
+                    # attempts). Fail CLOSED — a candidate that never compiles
+                    # is discarded and the stored resume stays untouched.
                     project_id = context.get('project_id', 'default')
-                    resume_data = fix_compilation_errors(resume_data, message, project_id)
+                    resume_data, compiled_ok = fix_compilation_errors(resume_data, message, project_id)
 
-                    # Update project in backend
-                    if project_id not in projects:
-                        projects[project_id] = {
-                            'id': project_id,
-                            'resume_tex': resume_data,
-                            'created_at': datetime.now().isoformat()
-                        }
+                    if not compiled_ok:
+                        print(f"❌ DEBUG: Edit rejected — never compiled; keeping last good version")
+                        update_rejected = True
+                        resume_data = None
+                        explanation = ""
                     else:
-                        projects[project_id]['resume_tex'] = resume_data
+                        is_resume_update = True
 
-                    save_projects()
-                    print(f"✅ DEBUG: Resume updated via direct AI edit")
+                        # Update project in backend
+                        if project_id not in projects:
+                            projects[project_id] = {
+                                'id': project_id,
+                                'resume_tex': resume_data,
+                                'created_at': datetime.now().isoformat()
+                            }
+                        else:
+                            projects[project_id]['resume_tex'] = resume_data
+
+                        save_projects()
+                        print(f"✅ DEBUG: Resume updated via direct AI edit")
         except json.JSONDecodeError as e:
             print(f"⚠️ DEBUG: No JSON update found in response: {e}")
         except Exception as e:
@@ -1429,6 +1445,12 @@ Remember: You're having a natural conversation. Be helpful, concise, and proacti
 
         # Extract clean response text (remove JSON block)
         response_text = re.sub(r'```json\s*\{.*?\}\s*```', '', ai_response, flags=re.DOTALL).strip()
+
+        if update_rejected:
+            rejection_note = ("I couldn't apply that change safely — the edited document "
+                              "failed to compile even after repair attempts, so your resume "
+                              "was left unchanged. Try rephrasing the request.")
+            response_text = f"{response_text}\n\n{rejection_note}".strip() if response_text else rejection_note
 
         return {
             "response": response_text,
@@ -1489,12 +1511,16 @@ def fit_one_page(request: dict):
     MAX_ITERS = 5
     pages = None
     iterations = 0
+    success = False
+    last_good = None  # last draft that actually compiled
 
     for i in range(MAX_ITERS + 1):
         # Compile the current draft and count its pages.
         cleaned, _, _ = clean_latex_content(latex)
         latex = cleaned
         success, pdf_path, err = compile_service.compile_latex(latex, f"{project_id}_fit")
+        if success:
+            last_good = latex
         pages = _count_pdf_pages(pdf_path) if success and pdf_path else None
         print(f"📏 DEBUG: fit-one-page iter {i}: compiled={success}, pages={pages}")
 
@@ -1539,6 +1565,11 @@ Current LaTeX:
         except Exception as e:
             print(f"❌ ERROR: fit-one-page condense failed: {e}")
             break
+
+    # Fail closed: never persist a draft that doesn't compile.
+    if not success and last_good:
+        print("⚠️ DEBUG: final draft didn't compile; reverting to last compiling version")
+        latex = last_good
 
     project["resume_tex"] = latex
     project["last_updated"] = datetime.utcnow().isoformat()
