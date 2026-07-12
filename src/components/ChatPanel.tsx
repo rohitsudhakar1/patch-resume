@@ -5,7 +5,7 @@ import { Send, Sparkles, Briefcase, X, Check, CheckCircle2, FileCheck2 } from 'l
 
 interface Proposal {
   latex: string;
-  status: 'pending' | 'applied' | 'discarded';
+  status: 'pending' | 'applied' | 'discarded' | 'expired';
   // Human-readable label for version history, e.g. 'Chat: "Change my name…"'
   description: string;
 }
@@ -59,6 +59,21 @@ export const ChatPanel = () => {
       setMessages([initialMessage]);
     }
   }, [messages.length]);
+
+  // A proposal is a snapshot of one specific document state. If the document
+  // changes underneath it (another apply, undo/redo, history restore), the
+  // snapshot is stale — expire it so a late click can't resurrect old content.
+  useEffect(() => {
+    const expireStale = () => {
+      setMessages(prev => prev.map(m =>
+        m.proposal?.status === 'pending'
+          ? { ...m, proposal: { ...m.proposal, status: 'expired' as const } }
+          : m
+      ));
+    };
+    window.addEventListener('projectUpdated', expireStale);
+    return () => window.removeEventListener('projectUpdated', expireStale);
+  }, []);
 
   // Fit-to-one-page results arrive as proposals too (same approval flow).
   useEffect(() => {
@@ -153,10 +168,13 @@ export const ChatPanel = () => {
         body: JSON.stringify(updatedProject),
       });
       sessionStorage.setItem('currentProject', JSON.stringify(updatedProject));
-      window.dispatchEvent(new CustomEvent('projectUpdated', { detail: updatedProject }));
+      // Mark this proposal applied BEFORE broadcasting, so the expiry
+      // listener (which expires all still-pending proposals on any document
+      // change) skips it and only retires the stale ones.
       setMessages(prev => prev.map(m =>
         m.id === messageId && m.proposal ? { ...m, proposal: { ...m.proposal, status: 'applied' } } : m
       ));
+      window.dispatchEvent(new CustomEvent('projectUpdated', { detail: updatedProject }));
       console.log('✅ Proposal applied by user');
     } catch (error) {
       console.error('❌ Failed to apply proposal:', error);
@@ -383,6 +401,15 @@ export const ChatPanel = () => {
                      >
                        <X className="h-4 w-4 shrink-0 text-slate-500" />
                        <p className="text-xs font-medium text-slate-400">Discarded — resume unchanged</p>
+                     </div>
+                   )}
+                   {message.proposal.status === 'expired' && (
+                     <div
+                       className="flex items-center gap-2 rounded-lg border border-slate-600/40 bg-slate-700/20 px-3 py-2"
+                       data-testid="proposal-expired"
+                     >
+                       <X className="h-4 w-4 shrink-0 text-slate-500" />
+                       <p className="text-xs font-medium text-slate-400">Expired — the resume changed since this was proposed</p>
                      </div>
                    )}
                  </div>
