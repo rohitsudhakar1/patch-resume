@@ -36,8 +36,9 @@ function normalizePatchContent(raw: string): string {
   if (!raw) return '';
   let s = raw;
 
-  // Canonicalize escaped newlines
-  s = s.replace(/\\n/g, '\n');
+  // NOTE: do NOT blanket-replace literal "\n" with newlines — it corrupts
+  // valid commands like \newcommand. The targeted fixes below handle the
+  // legacy patch-content artifacts this function exists for.
 
   // Turn lone 'n' before LaTeX commands into newline+backslash
   const cmd = '(begin|end|item|textbf|textit|section\\*?|subsection\\*?|documentclass|usepackage|href|url)';
@@ -74,13 +75,15 @@ function normalizeChanges(changes: Change[] = []): NormChange[] {
   });
 }
 
-/** Gentle cleaner for editor content (preserves LaTeX). */
+/** Gentle cleaner for editor content (preserves LaTeX).
+ * NOTE: never "unescape" \n here — replacing literal backslash-n with a
+ * newline eats the backslash off \newcommand (turning it into "ewcommand"),
+ * the same over-aggressive-cleaner bug the backend fixed long ago. */
 function cleanEditorContent(raw: string): string {
   if (!raw) return '';
   let s = raw.replace(/\r/g, '');
   s = s.replace(/\\\\(begin|end)\{itemize\}/g, '\\$1{itemize}');
   s = s.replace(/\\\\item/g, '\\item');
-  s = s.replace(/\\n/g, '\n');
   s = s.replace(/\n{4,}/g, '\n\n');
   return s;
 }
@@ -255,8 +258,9 @@ export default function LaTeXEditor({ changes, onContentChange, content: propCon
             const cleaned = cleanEditorContent(project.resume_tex);
             setContent(cleaned);
             (window as any).latexEditorContent = cleaned;
-            project.resume_tex = cleaned;
-            sessionStorage.setItem('currentProject', JSON.stringify(project));
+            // The editor is a VIEW — it must never write its processed copy
+            // back into sessionStorage (that silently mutates the source of
+            // truth for every other component).
           }
         } catch {}
       }
@@ -281,8 +285,7 @@ export default function LaTeXEditor({ changes, onContentChange, content: propCon
           console.log('✅ DEBUG: Updated LaTeX editor with new content (length:', cleaned.length, ')');
           setContent(cleaned);
           (window as any).latexEditorContent = cleaned;
-          project.resume_tex = cleaned;
-          sessionStorage.setItem('currentProject', JSON.stringify(project));
+          // View only — never write back into sessionStorage (see above).
         }
       } catch {}
     };

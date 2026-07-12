@@ -51,7 +51,8 @@ export const UploadModal = ({ onClose }: UploadModalProps) => {
           id: result.project_id,
           resume_tex: result.resume_tex,
           pdf_url: result.pdf_url,
-          reconstruction_note: result.reconstruction_note
+          reconstruction_note: result.reconstruction_note,
+          last_description: 'Resume uploaded'
         };
         
         sessionStorage.setItem('currentProject', JSON.stringify(projectData));

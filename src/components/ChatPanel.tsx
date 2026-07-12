@@ -6,6 +6,8 @@ import { Send, Sparkles, Briefcase, X, Check } from 'lucide-react';
 interface Proposal {
   latex: string;
   status: 'pending' | 'applied' | 'discarded';
+  // Human-readable label for version history, e.g. 'Chat: "Change my name…"'
+  description: string;
 }
 
 interface Message {
@@ -71,7 +73,7 @@ export const ChatPanel = () => {
           ? `Condensed your resume to one page in ${passes}. Review the highlighted preview and apply if it looks right.`
           : `Best effort: reached ${d.pages ?? '?'} pages after ${passes}. Review the preview and decide.`,
         timestamp: new Date(),
-        proposal: { latex: d.latex, status: 'pending' }
+        proposal: { latex: d.latex, status: 'pending', description: d.fit ? 'Fit to one page' : 'Condensed (best effort)' }
       };
       setMessages(prev => [...prev, msg]);
       if (d.previewAvailable && d.projectId) {
@@ -141,7 +143,7 @@ export const ChatPanel = () => {
       ...currentProject,
       resume_tex: msg.proposal.latex,
       last_updated: new Date().toISOString(),
-      last_description: 'Applied chat edit'
+      last_description: msg.proposal.description || 'Applied chat edit'
     };
 
     try {
@@ -229,12 +231,15 @@ export const ChatPanel = () => {
       // Display AI response. A validated resume update arrives as a PROPOSAL —
       // nothing is applied until the user clicks Apply (human approval layer).
       const hasProposal = data.is_resume_update && data.resume_data;
+      const isTailor = (displayText || '').startsWith('✦');
+      const shortAsk = message.length > 42 ? message.slice(0, 42) + '…' : message;
+      const description = isTailor ? 'Tailored to job description' : `Chat: "${shortAsk}"`;
       const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
         type: 'assistant',
         content: (data.response && data.response.trim()) || data.explanation || 'Done.',
         timestamp: new Date(),
-        ...(hasProposal ? { proposal: { latex: data.resume_data, status: 'pending' as const } } : {})
+        ...(hasProposal ? { proposal: { latex: data.resume_data, status: 'pending' as const, description } } : {})
       };
       setMessages(prev => [...prev, aiMessage]);
 

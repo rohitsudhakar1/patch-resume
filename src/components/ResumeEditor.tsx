@@ -28,6 +28,7 @@ export const ResumeEditor = () => {
   // Initialize version history
   const {
     currentVersion,
+    currentIndex,
     versions,
     canUndo,
     canRedo,
@@ -71,8 +72,10 @@ export const ResumeEditor = () => {
         setCurrentProject(projectData);
         setShowUploadModal(false);
 
-        // Save to version history when content changes
-        if (projectData.resume_tex && projectData.resume_tex !== currentVersion) {
+        // Save to version history when content changes — but NOT for
+        // undo/redo/history restores: re-saving a restored version would
+        // truncate the redo stack and break Redo entirely.
+        if (!projectData.__restored && projectData.resume_tex && projectData.resume_tex !== currentVersion) {
           const description = projectData.last_description || 'AI update';
           saveVersion(projectData.resume_tex, description);
         }
@@ -113,50 +116,34 @@ export const ResumeEditor = () => {
     }
   };
 
-  // Handle undo
-  const handleUndo = () => {
-    const previousContent = undo();
-    if (previousContent && currentProject) {
-      const updatedProject = {
-        ...currentProject,
-        resume_tex: previousContent,
-        last_updated: new Date().toISOString()
-      };
-      sessionStorage.setItem('currentProject', JSON.stringify(updatedProject));
-      setCurrentProject(updatedProject);
-      window.dispatchEvent(new CustomEvent('projectUpdated', { detail: updatedProject }));
+  // Shared restore path for undo/redo/history: sync the BACKEND first (the
+  // PDF endpoint compiles from backend state — without this the preview
+  // silently keeps showing the newer version), then notify with a marker so
+  // the update listener doesn't re-save the restore as a new version.
+  const restoreVersion = async (content: string) => {
+    if (!content || !currentProject) return;
+    const updatedProject = {
+      ...currentProject,
+      resume_tex: content,
+      last_updated: new Date().toISOString()
+    };
+    sessionStorage.setItem('currentProject', JSON.stringify(updatedProject));
+    setCurrentProject(updatedProject);
+    try {
+      await fetch('http://localhost:8000/project/recreate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedProject),
+      });
+    } catch (e) {
+      console.error('❌ Failed to sync restored version to backend:', e);
     }
+    window.dispatchEvent(new CustomEvent('projectUpdated', { detail: { ...updatedProject, __restored: true } }));
   };
 
-  // Handle redo
-  const handleRedo = () => {
-    const nextContent = redo();
-    if (nextContent && currentProject) {
-      const updatedProject = {
-        ...currentProject,
-        resume_tex: nextContent,
-        last_updated: new Date().toISOString()
-      };
-      sessionStorage.setItem('currentProject', JSON.stringify(updatedProject));
-      setCurrentProject(updatedProject);
-      window.dispatchEvent(new CustomEvent('projectUpdated', { detail: updatedProject }));
-    }
-  };
-
-  // Handle go to version
-  const handleGoToVersion = (versionId: string) => {
-    const versionContent = goToVersion(versionId);
-    if (versionContent && currentProject) {
-      const updatedProject = {
-        ...currentProject,
-        resume_tex: versionContent,
-        last_updated: new Date().toISOString()
-      };
-      sessionStorage.setItem('currentProject', JSON.stringify(updatedProject));
-      setCurrentProject(updatedProject);
-      window.dispatchEvent(new CustomEvent('projectUpdated', { detail: updatedProject }));
-    }
-  };
+  const handleUndo = () => restoreVersion(undo() || '');
+  const handleRedo = () => restoreVersion(redo() || '');
+  const handleGoToVersion = (versionId: string) => restoreVersion(goToVersion(versionId) || '');
 
   const handleTabChange = (tab: 'pdf' | 'latex') => {
     setActiveTab(tab);
@@ -284,7 +271,7 @@ export const ResumeEditor = () => {
             <div className="w-80 flex-shrink-0">
               <VersionHistory
                 versions={versions}
-                currentIndex={versions.findIndex(v => v.content === currentVersion)}
+                currentIndex={currentIndex}
                 canUndo={canUndo}
                 canRedo={canRedo}
                 onUndo={handleUndo}

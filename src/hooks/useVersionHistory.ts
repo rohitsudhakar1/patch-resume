@@ -9,6 +9,7 @@ export interface Version {
 
 interface UseVersionHistoryReturn {
   currentVersion: string;
+  currentIndex: number;
   versions: Version[];
   canUndo: boolean;
   canRedo: boolean;
@@ -102,6 +103,7 @@ export const useVersionHistory = (initialContent: string = ''): UseVersionHistor
 
   return {
     currentVersion,
+    currentIndex,
     versions,
     canUndo,
     canRedo,
