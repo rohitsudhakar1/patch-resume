@@ -115,7 +115,9 @@ class CleanParseService:
                     if company and len(company) > 3:
                         experience.append({
                             'company': company,
-                            'title': 'Software Engineer',  # Default title
+                            # Never invent a job title — leave unknown fields
+                            # blank rather than fabricating resume content.
+                            'title': '',
                             'location': '',
                             'start_date': '',
                             'end_date': '',
@@ -138,10 +140,12 @@ class CleanParseService:
                 if institution and len(institution) > 5:
                     education.append({
                         'school': institution,
-                        'degree': 'Bachelor of Science in Computer Engineering',
-                        'start_date': '2022',
-                        'end_date': '2026',
-                        'gpa': '3.7/4.00'
+                        # Never invent degrees, dates, or GPAs — blank fields
+                        # are honest; fabricated ones are not.
+                        'degree': '',
+                        'start_date': '',
+                        'end_date': '',
+                        'gpa': ''
                     })
                     break  # Only add one for now
     
